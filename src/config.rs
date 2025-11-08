@@ -13,8 +13,9 @@ pub struct TerrainConfig {
     bottom_layer_block: Arc<str>,
     top_layer_thickness: u32,
     base_biome: Arc<str>,
-    biome_layers: Vec<VerticalLayer>,
-    top_block_layers: Vec<VerticalLayer>,
+    biome_layers: Vec<BiomeLayer>,
+    top_block_layers: Vec<TopBlockLayer>,
+    cliffs: CliffConfig,
 }
 
 impl TerrainConfig {
@@ -42,15 +43,22 @@ impl TerrainConfig {
         Arc::clone(&self.base_biome)
     }
 
-    pub fn biome_for_height(&self, surface_height: i32) -> Arc<str> {
-        match self
+    pub fn biome_and_cliff_for_height(
+        &self,
+        surface_height: i32,
+    ) -> (Arc<str>, Option<CliffSettings>) {
+        let layer = self
             .biome_layers
             .iter()
-            .find(|layer| layer.contains(surface_height))
-        {
-            Some(layer) => Arc::clone(&layer.value),
+            .find(|layer| layer.contains(surface_height));
+        let biome = match layer {
+            Some(layer) => Arc::clone(&layer.biome),
             None => Arc::clone(&self.base_biome),
-        }
+        };
+        let cliff = self
+            .cliffs
+            .resolve(layer.and_then(|layer| layer.cliff_override.as_ref()));
+        (biome, cliff)
     }
 
     pub fn top_block_for_height(&self, surface_height: i32) -> Arc<str> {
@@ -59,7 +67,7 @@ impl TerrainConfig {
             .iter()
             .find(|layer| layer.contains(surface_height))
         {
-            Some(layer) => Arc::clone(&layer.value),
+            Some(layer) => Arc::clone(&layer.block),
             None => Arc::clone(&self.top_layer_block),
         }
     }
@@ -69,6 +77,7 @@ impl TerrainConfig {
             bail!("top_layer_thickness must be greater than 0");
         }
 
+        let cliffs = CliffConfig::from_file(file.cliff_generation)?;
         let biome_layers = file
             .biome_layers
             .into_iter()
@@ -87,6 +96,7 @@ impl TerrainConfig {
             base_biome: Arc::<str>::from(file.base_biome),
             biome_layers,
             top_block_layers,
+            cliffs,
         })
     }
 }
@@ -100,6 +110,7 @@ impl Default for TerrainConfig {
             base_biome: Arc::<str>::from("minecraft:plains"),
             biome_layers: Vec::new(),
             top_block_layers: Vec::new(),
+            cliffs: CliffConfig::default(),
         }
     }
 }
@@ -118,6 +129,8 @@ struct TerrainConfigFile {
     biome_layers: Vec<BiomeLayerFile>,
     #[serde(default)]
     top_block_layers: Vec<TopBlockLayerFile>,
+    #[serde(default)]
+    cliff_generation: CliffGenerationFile,
 }
 
 fn default_bottom_layer() -> String {
@@ -136,11 +149,23 @@ fn default_base_biome() -> String {
     "minecraft:plains".to_string()
 }
 
+fn default_cliff_angle() -> f64 {
+    60.0
+}
+
+fn default_cliff_block() -> String {
+    "minecraft:stone".to_string()
+}
+
 #[derive(Debug, Deserialize)]
 struct BiomeLayerFile {
     #[serde(default)]
     range: RangeFile,
     biome: String,
+    #[serde(default)]
+    cliff_angle_threshold_degrees: Option<f64>,
+    #[serde(default)]
+    cliff_block: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -148,6 +173,26 @@ struct TopBlockLayerFile {
     #[serde(default)]
     range: RangeFile,
     block: String,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+struct CliffGenerationFile {
+    #[serde(default)]
+    enabled: bool,
+    #[serde(default = "default_cliff_angle")]
+    angle_threshold_degrees: f64,
+    #[serde(default = "default_cliff_block")]
+    block: String,
+}
+
+impl Default for CliffGenerationFile {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            angle_threshold_degrees: default_cliff_angle(),
+            block: default_cliff_block(),
+        }
+    }
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -159,40 +204,148 @@ struct RangeFile {
 }
 
 #[derive(Debug, Clone)]
-struct VerticalLayer {
-    min: i32,
-    max: i32,
-    value: Arc<str>,
+pub struct CliffSettings {
+    pub angle_threshold_degrees: f64,
+    pub block: Arc<str>,
 }
 
-impl VerticalLayer {
+#[derive(Debug, Clone)]
+struct CliffOverride {
+    angle_threshold_degrees: Option<f64>,
+    block: Option<Arc<str>>,
+}
+
+#[derive(Debug, Clone)]
+struct CliffConfig {
+    enabled: bool,
+    default_settings: CliffSettings,
+}
+
+impl CliffConfig {
+    fn from_file(file: CliffGenerationFile) -> Result<Self> {
+        if file.angle_threshold_degrees <= 0.0 {
+            bail!("cliff_generation.angle_threshold_degrees must be greater than 0");
+        }
+        if file.block.trim().is_empty() {
+            bail!("cliff_generation.block must not be empty");
+        }
+        Ok(Self {
+            enabled: file.enabled,
+            default_settings: CliffSettings {
+                angle_threshold_degrees: file.angle_threshold_degrees,
+                block: Arc::<str>::from(file.block),
+            },
+        })
+    }
+
+    fn resolve(&self, override_settings: Option<&CliffOverride>) -> Option<CliffSettings> {
+        if !self.enabled {
+            return None;
+        }
+        let mut resolved = self.default_settings.clone();
+        if let Some(overrides) = override_settings {
+            if let Some(angle) = overrides.angle_threshold_degrees {
+                resolved.angle_threshold_degrees = angle;
+            }
+            if let Some(block) = &overrides.block {
+                resolved.block = Arc::clone(block);
+            }
+        }
+        Some(resolved)
+    }
+}
+
+impl Default for CliffConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            default_settings: CliffSettings {
+                angle_threshold_degrees: default_cliff_angle(),
+                block: Arc::<str>::from(default_cliff_block()),
+            },
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+struct BiomeLayer {
+    min: i32,
+    max: i32,
+    biome: Arc<str>,
+    cliff_override: Option<CliffOverride>,
+}
+
+impl BiomeLayer {
     fn contains(&self, height: i32) -> bool {
         height >= self.min && height <= self.max
     }
 }
 
-fn parse_biome_layer(file: BiomeLayerFile) -> Result<VerticalLayer> {
+#[derive(Debug, Clone)]
+struct TopBlockLayer {
+    min: i32,
+    max: i32,
+    block: Arc<str>,
+}
+
+impl TopBlockLayer {
+    fn contains(&self, height: i32) -> bool {
+        height >= self.min && height <= self.max
+    }
+}
+
+fn parse_biome_layer(file: BiomeLayerFile) -> Result<BiomeLayer> {
     if file.biome.trim().is_empty() {
         bail!("Biome layer value must not be empty");
     }
     let range = parse_range(file.range)?;
-    Ok(VerticalLayer {
+    let cliff_override =
+        parse_cliff_override(file.cliff_angle_threshold_degrees, file.cliff_block)?;
+    Ok(BiomeLayer {
         min: range.0,
         max: range.1,
-        value: Arc::<str>::from(file.biome),
+        biome: Arc::<str>::from(file.biome),
+        cliff_override,
     })
 }
 
-fn parse_top_block_layer(file: TopBlockLayerFile) -> Result<VerticalLayer> {
+fn parse_top_block_layer(file: TopBlockLayerFile) -> Result<TopBlockLayer> {
     if file.block.trim().is_empty() {
         bail!("Top block layer value must not be empty");
     }
     let range = parse_range(file.range)?;
-    Ok(VerticalLayer {
+    Ok(TopBlockLayer {
         min: range.0,
         max: range.1,
-        value: Arc::<str>::from(file.block),
+        block: Arc::<str>::from(file.block),
     })
+}
+
+fn parse_cliff_override(
+    angle: Option<f64>,
+    block: Option<String>,
+) -> Result<Option<CliffOverride>> {
+    if angle.is_none() && block.is_none() {
+        return Ok(None);
+    }
+    if let Some(value) = angle {
+        if value <= 0.0 {
+            bail!("cliff_angle_threshold_degrees must be greater than 0");
+        }
+    }
+    let block = match block {
+        Some(name) => {
+            if name.trim().is_empty() {
+                bail!("cliff_block must not be empty when provided");
+            }
+            Some(Arc::<str>::from(name))
+        }
+        None => None,
+    };
+    Ok(Some(CliffOverride {
+        angle_threshold_degrees: angle,
+        block,
+    }))
 }
 
 fn parse_range(range: RangeFile) -> Result<(i32, i32)> {

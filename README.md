@@ -88,10 +88,16 @@ Pass `--config <file>` to override the default surface blocks and biome. The fil
   "top_layer_thickness": 1,
   "bottom_layer_block": "minecraft:stone",
   "base_biome": "minecraft:plains",
+  "cliff_generation": {
+    "enabled": true,
+    "angle_threshold_degrees": 60.0,
+    "block": "minecraft:stone"
+  },
   "biome_layers": [
     {
       "range": { "min": "0m", "max": "300m" },
-      "biome": "minecraft:plains"
+      "biome": "minecraft:plains",
+      "cliff_block": "minecraft:cobblestone"
     },
     {
       "range": { "min": "300m", "max": "1200m" },
@@ -114,5 +120,7 @@ Pass `--config <file>` to override the default surface blocks and biome. The fil
 All fields are optional; missing values fall back to the defaults shown above. `top_layer_thickness` must be at least 1 and defines how many blocks (starting at the surface) use the selected top block. Everything below that (down to bedrock) uses `bottom_layer_block`.
 
 `biome_layers` and `top_block_layers` let you vary the biome and surface block based on a column’s ground elevation. Each entry requires a `range` with an optional `min` and `max` bound, plus the `biome` or `block` to apply when the surface height falls inside that range. Bounds accept either metres (`"300m"`) or raw Minecraft block heights (`"1200b"`). When multiple layers overlap, the first one in the list wins. Columns that do not match any layer continue to use `base_biome` and `top_layer_block`.
+
+Set `cliff_generation.enabled` to `true` to automatically replace the surface block on steep slopes. The generator measures the steepest angle between each column and its immediate neighbours; if it exceeds `angle_threshold_degrees` the surface block switches to the configured `cliff_generation.block`. Individual `biome_layers` entries can override the threshold and/or block via the optional `cliff_angle_threshold_degrees` and `cliff_block` keys, letting you keep snowy cliffs icy while lower elevations stay rocky.
 
 See [`examples/french_alps.json`](examples/french_alps.json) for a full configuration inspired by alpine terrain.

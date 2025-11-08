@@ -10,7 +10,7 @@ use fastnbt::{self, LongArray};
 use rayon::prelude::*;
 use serde::Serialize;
 
-use crate::config::TerrainConfig;
+use crate::config::{CliffSettings, TerrainConfig};
 use crate::constants::{BEDROCK_Y, BLOCKS_PER_SECTION, DATA_VERSION, MAX_WORLD_Y, SECTION_SIDE};
 use crate::progress::progress_bar;
 
@@ -21,21 +21,29 @@ const _: [(); SECTION_SIDE % 4] = [];
 
 pub struct ChunkHeights {
     heights: [Option<i32>; SECTION_SIDE * SECTION_SIDE],
+    slope_angles: [f32; SECTION_SIDE * SECTION_SIDE],
 }
 
 impl ChunkHeights {
     pub fn new() -> Self {
         Self {
             heights: [None; SECTION_SIDE * SECTION_SIDE],
+            slope_angles: [0.0; SECTION_SIDE * SECTION_SIDE],
         }
     }
 
-    pub fn set(&mut self, x: usize, z: usize, height: i32) {
-        self.heights[z * SECTION_SIDE + x] = Some(height);
+    pub fn set(&mut self, x: usize, z: usize, height: i32, slope_degrees: f32) {
+        let idx = z * SECTION_SIDE + x;
+        self.heights[idx] = Some(height);
+        self.slope_angles[idx] = slope_degrees;
     }
 
     pub fn column(&self, x: usize, z: usize) -> Option<i32> {
         self.heights[z * SECTION_SIDE + x]
+    }
+
+    pub fn slope(&self, x: usize, z: usize) -> f32 {
+        self.slope_angles[z * SECTION_SIDE + x]
     }
 
     pub fn max_height(&self) -> Option<i32> {
@@ -186,17 +194,25 @@ fn build_sections(
     for local_z in 0..SECTION_SIDE {
         for local_x in 0..SECTION_SIDE {
             let height = columns.column(local_x, local_z);
-            let (biome, top_block) = match height {
-                Some(surface) => (
-                    terrain.biome_for_height(surface),
-                    terrain.top_block_for_height(surface),
+            let slope_degrees = columns.slope(local_x, local_z);
+            let (biome, top_block, cliff) = match height {
+                Some(surface) => {
+                    let (biome, cliff) = terrain.biome_and_cliff_for_height(surface);
+                    let top_block = terrain.top_block_for_height(surface);
+                    (biome, top_block, cliff)
+                }
+                None => (
+                    Arc::clone(&default_biome),
+                    Arc::clone(&default_top_block),
+                    None,
                 ),
-                None => (Arc::clone(&default_biome), Arc::clone(&default_top_block)),
             };
             column_settings.push(ColumnSettings {
                 height,
                 biome,
                 top_block,
+                slope_degrees,
+                cliff,
             });
         }
     }
@@ -271,6 +287,19 @@ struct ColumnSettings {
     height: Option<i32>,
     biome: Arc<str>,
     top_block: Arc<str>,
+    slope_degrees: f32,
+    cliff: Option<CliffSettings>,
+}
+
+impl ColumnSettings {
+    fn cliff_block_override(&self) -> Option<Arc<str>> {
+        let settings = self.cliff.as_ref()?;
+        if self.slope_degrees as f64 >= settings.angle_threshold_degrees {
+            Some(Arc::clone(&settings.block))
+        } else {
+            None
+        }
+    }
 }
 
 fn block_for(
@@ -290,6 +319,11 @@ fn block_for(
     }
     let depth = surface - world_y;
     if depth < top_thickness as i32 {
+        if depth == 0 {
+            if let Some(block) = column.cliff_block_override() {
+                return BlockId::Named(block);
+            }
+        }
         BlockId::Named(Arc::clone(&column.top_block))
     } else {
         BlockId::Named(Arc::clone(bottom_block))

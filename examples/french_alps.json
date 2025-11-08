@@ -1,10 +1,15 @@
 {
   "top_layer_block": "minecraft:grass_block",
-  "top_layer_thickness": 2,
+  "top_layer_thickness": 6,
   "bottom_layer_block": "minecraft:stone",
   "base_biome": "minecraft:plains",
+  "cliff_generation": {
+    "enabled": true,
+    "angle_threshold_degrees": 55.0,
+    "block": "minecraft:stone"
+  },
   "biome_layers": [
-    { "range": { "min": "3300m" },                 "biome": "minecraft:frozen_peaks" },
+    { "range": { "min": "3300m" },                 "biome": "minecraft:frozen_peaks", "cliff_angle_threshold_degrees": 40.0 },
     { "range": { "min": "2500m", "max": "3300m" }, "biome": "minecraft:snowy_slopes" },
     { "range": { "min": "1800m", "max": "2500m" }, "biome": "minecraft:stony_peaks" },
     { "range": { "min": "1200m", "max": "1800m" }, "biome": "minecraft:windswept_hills" },

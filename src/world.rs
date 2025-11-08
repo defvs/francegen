@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::f64::consts::SQRT_2;
 use std::path::Path;
 
 use anyhow::Result;
@@ -117,16 +118,18 @@ impl WorldBuilder {
     }
 
     pub fn into_chunks(self) -> HashMap<(i32, i32), ChunkHeights> {
+        let columns = self.columns;
         let mut chunks: HashMap<(i32, i32), ChunkHeights> = HashMap::new();
-        for ((x, z), height) in self.columns {
+        for (&(x, z), &height) in columns.iter() {
             let chunk_x = x.div_euclid(SECTION_SIDE as i32);
             let chunk_z = z.div_euclid(SECTION_SIDE as i32);
             let local_x = x.rem_euclid(SECTION_SIDE as i32) as usize;
             let local_z = z.rem_euclid(SECTION_SIDE as i32) as usize;
+            let slope = max_slope_degrees(x, z, height, &columns);
             let entry = chunks
                 .entry((chunk_x, chunk_z))
                 .or_insert_with(ChunkHeights::new);
-            entry.set(local_x, local_z, height);
+            entry.set(local_x, local_z, height, slope);
         }
         chunks
     }
@@ -167,6 +170,30 @@ fn model_to_world(origin: &Coord, coord: &Coord) -> (i32, i32) {
     let dx = coord.x - origin.x;
     let dz = origin.y - coord.y;
     (dx.round() as i32, dz.round() as i32)
+}
+
+fn max_slope_degrees(x: i32, z: i32, height: i32, columns: &HashMap<(i32, i32), i32>) -> f32 {
+    const NEIGHBORS: &[(i32, i32, f64)] = &[
+        (1, 0, 1.0),
+        (-1, 0, 1.0),
+        (0, 1, 1.0),
+        (0, -1, 1.0),
+        (1, 1, SQRT_2),
+        (1, -1, SQRT_2),
+        (-1, 1, SQRT_2),
+        (-1, -1, SQRT_2),
+    ];
+    let mut max_angle = 0.0;
+    for &(dx, dz, horizontal) in NEIGHBORS {
+        if let Some(neighbor_height) = columns.get(&(x + dx, z + dz)) {
+            let diff = (height - *neighbor_height).abs() as f64;
+            let angle = (diff / horizontal).atan().to_degrees();
+            if angle > max_angle {
+                max_angle = angle;
+            }
+        }
+    }
+    max_angle as f32
 }
 
 pub fn dem_to_minecraft(value: f64) -> i32 {
