@@ -1,5 +1,6 @@
 mod chunk;
 mod cli;
+mod config;
 mod constants;
 mod generate;
 mod georaster;

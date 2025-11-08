@@ -19,6 +19,7 @@ francegen [--threads <N>] [--meta-only] <tif-folder> <output-world>
 |------|-------------|
 | `--threads <N>` | Override Rayon’s worker count. Defaults to the number of logical CPUs. |
 | `--meta-only` | Read the tiles and emit only metadata (no region files). Useful to grab the origin before committing to a full build. |
+| `--config <file>` | Load a JSON terrain configuration file to control block layers and the base biome. |
 
 During ingestion the tool prints world-size estimates, DEM min/max, and the origin in model space. When generation finishes, it writes the usual `region/` directory plus a `francegen_meta.json` file inside `<output-world>` containing the GeoTIFF origin and bounds.
 
@@ -63,3 +64,18 @@ francegen locate ./worlds/alps 873210.4 6428123.6 1523.0
 ```
 
 You can also `cargo run -- --threads 8 ...` while developing locally.
+
+### Terrain configuration file
+
+Pass `--config <file>` to override the default surface blocks and biome. The file is JSON and supports these keys:
+
+```json
+{
+  "top_layer_block": "minecraft:grass_block",
+  "top_layer_thickness": 1,
+  "bottom_layer_block": "minecraft:stone",
+  "base_biome": "minecraft:plains"
+}
+```
+
+All fields are optional; missing values fall back to the defaults shown above. `top_layer_thickness` must be at least 1 and defines how many blocks (starting at the surface) use `top_layer_block`. Everything below that (down to bedrock) uses `bottom_layer_block`, and each chunk section’s biome palette is filled with `base_biome`.

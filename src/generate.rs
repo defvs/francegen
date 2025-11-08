@@ -7,6 +7,7 @@ use owo_colors::OwoColorize;
 
 use crate::chunk::write_regions;
 use crate::cli::GenerateConfig;
+use crate::config::TerrainConfig;
 use crate::constants::{BEDROCK_Y, MAX_WORLD_Y};
 use crate::metadata::write_metadata;
 use crate::progress::progress_bar;
@@ -70,7 +71,20 @@ pub fn run_generate(config: &GenerateConfig) -> Result<()> {
     let chunks = builder.into_chunks();
     let chunk_count = chunks.len();
 
-    let write_stats = write_regions(output, &chunks)?;
+    let terrain_config = match &config.terrain_config {
+        Some(path) => {
+            let config = TerrainConfig::load_from_path(path)?;
+            println!(
+                "{} Loaded terrain config: {}",
+                "ℹ".blue().bold(),
+                path.display()
+            );
+            config
+        }
+        None => TerrainConfig::default(),
+    };
+
+    let write_stats = write_regions(output, &chunks, &terrain_config)?;
     print_summary(Summary {
         input_dir: input,
         output_dir: output,

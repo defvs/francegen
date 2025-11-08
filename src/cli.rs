@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use anyhow::{Result, anyhow, bail};
 
-const USAGE: &str = "Usage: francegen [--threads <N>] <tif-folder> <output-world>\n       francegen locate <world-dir> <real-x> <real-z> [<real-height>]";
+const USAGE: &str = "Usage: francegen [--threads <N>] [--config <file>] <tif-folder> <output-world>\n       francegen locate <world-dir> <real-x> <real-z> [<real-height>]";
 
 pub enum Command {
     Generate(GenerateConfig),
@@ -14,6 +14,7 @@ pub struct GenerateConfig {
     pub output: PathBuf,
     pub threads: Option<usize>,
     pub meta_only: bool,
+    pub terrain_config: Option<PathBuf>,
 }
 
 pub struct LocateConfig {
@@ -40,6 +41,7 @@ fn parse_generate(args: &[String]) -> Result<GenerateConfig> {
     let mut output = None;
     let mut threads = None;
     let mut meta_only = false;
+    let mut terrain_config = None;
 
     let mut i = 0;
     while i < args.len() {
@@ -61,6 +63,14 @@ fn parse_generate(args: &[String]) -> Result<GenerateConfig> {
             meta_only = value
                 .parse::<bool>()
                 .map_err(|_| anyhow!("Invalid value for --meta-only (expected true/false)"))?;
+        } else if arg == "--config" {
+            i += 1;
+            if i >= args.len() {
+                bail!("Missing value for --config\n{USAGE}");
+            }
+            terrain_config = Some(PathBuf::from(&args[i]));
+        } else if let Some(value) = arg.strip_prefix("--config=") {
+            terrain_config = Some(PathBuf::from(value));
         } else if input.is_none() {
             input = Some(PathBuf::from(arg));
         } else if output.is_none() {
@@ -79,6 +89,7 @@ fn parse_generate(args: &[String]) -> Result<GenerateConfig> {
         output,
         threads,
         meta_only,
+        terrain_config,
     })
 }
 

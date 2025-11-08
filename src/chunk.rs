@@ -10,6 +10,7 @@ use fastnbt::{self, LongArray};
 use rayon::prelude::*;
 use serde::Serialize;
 
+use crate::config::TerrainConfig;
 use crate::constants::{BEDROCK_Y, BLOCKS_PER_SECTION, DATA_VERSION, MAX_WORLD_Y, SECTION_SIDE};
 use crate::progress::progress_bar;
 
@@ -45,6 +46,7 @@ pub struct WriteStats {
 pub fn write_regions(
     output: &Path,
     chunks: &HashMap<(i32, i32), ChunkHeights>,
+    terrain: &TerrainConfig,
 ) -> Result<WriteStats> {
     if chunks.is_empty() {
         return Ok(WriteStats {
@@ -87,7 +89,7 @@ pub fn write_regions(
             let mut written = 0usize;
             for (chunk_x, chunk_z) in coords {
                 if let Some(columns) = chunks.get(&(chunk_x, chunk_z)) {
-                    if let Some(data) = build_chunk_bytes(chunk_x, chunk_z, columns)? {
+                    if let Some(data) = build_chunk_bytes(chunk_x, chunk_z, columns, terrain)? {
                         let local_x = chunk_x.rem_euclid(32) as usize;
                         let local_z = chunk_z.rem_euclid(32) as usize;
                         region
@@ -130,13 +132,14 @@ fn build_chunk_bytes(
     chunk_x: i32,
     chunk_z: i32,
     columns: &ChunkHeights,
+    terrain: &TerrainConfig,
 ) -> Result<Option<Vec<u8>>> {
     let max_height = match columns.max_height() {
         Some(value) => value,
         None => return Ok(None),
     };
 
-    let sections = build_sections(columns, max_height);
+    let sections = build_sections(columns, max_height, terrain);
     if sections.is_empty() {
         return Ok(None);
     }
@@ -160,19 +163,23 @@ fn build_chunk_bytes(
     Ok(Some(bytes))
 }
 
-fn build_sections(columns: &ChunkHeights, max_height: i32) -> Vec<SectionNbt> {
+fn build_sections(
+    columns: &ChunkHeights,
+    max_height: i32,
+    terrain: &TerrainConfig,
+) -> Vec<SectionNbt> {
     let mut sections = Vec::new();
     let min_section = BEDROCK_Y.div_euclid(SECTION_SIDE as i32);
     let max_section = max(min_section, max_height.div_euclid(SECTION_SIDE as i32));
 
     for section_y in min_section..=max_section {
-        let mut builder = SectionBuilder::new(section_y as i8);
+        let mut builder = SectionBuilder::new(section_y as i8, terrain.base_biome());
         for local_y in 0..SECTION_SIDE {
             let world_y = section_y * SECTION_SIDE as i32 + local_y as i32;
             for local_z in 0..SECTION_SIDE {
                 for local_x in 0..SECTION_SIDE {
                     let column_height = columns.column(local_x, local_z);
-                    let block = block_for(world_y, column_height);
+                    let block = block_for(world_y, column_height, terrain);
                     builder.set(local_x, local_y, local_z, block);
                 }
             }
@@ -231,7 +238,7 @@ fn pack_unsigned(values: &[u64], bits: usize) -> Vec<i64> {
     longs
 }
 
-fn block_for(world_y: i32, height: Option<i32>) -> BlockId {
+fn block_for(world_y: i32, height: Option<i32>, terrain: &TerrainConfig) -> BlockId {
     if world_y <= BEDROCK_Y {
         return BlockId::Bedrock;
     }
@@ -242,30 +249,26 @@ fn block_for(world_y: i32, height: Option<i32>) -> BlockId {
         return BlockId::Air;
     }
     let depth = surface - world_y;
-    match depth {
-        0 => BlockId::Grass,
-        1..=3 => BlockId::Dirt,
-        _ => BlockId::Stone,
+    if depth < terrain.top_layer_thickness() as i32 {
+        BlockId::Named(terrain.top_layer_block())
+    } else {
+        BlockId::Named(terrain.bottom_layer_block())
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 enum BlockId {
     Air,
     Bedrock,
-    Stone,
-    Dirt,
-    Grass,
+    Named(Arc<str>),
 }
 
 impl BlockId {
-    fn name(self) -> &'static str {
+    fn name(&self) -> &str {
         match self {
             BlockId::Air => "minecraft:air",
             BlockId::Bedrock => "minecraft:bedrock",
-            BlockId::Stone => "minecraft:stone",
-            BlockId::Dirt => "minecraft:dirt",
-            BlockId::Grass => "minecraft:grass_block",
+            BlockId::Named(name) => name.as_ref(),
         }
     }
 }
@@ -275,20 +278,22 @@ struct SectionBuilder {
     palette: PaletteBuilder,
     indices: Vec<u16>,
     has_blocks: bool,
+    base_biome: Arc<str>,
 }
 
 impl SectionBuilder {
-    fn new(y: i8) -> Self {
+    fn new(y: i8, base_biome: Arc<str>) -> Self {
         Self {
             y,
             palette: PaletteBuilder::new(),
             indices: vec![0; BLOCKS_PER_SECTION],
             has_blocks: false,
+            base_biome,
         }
     }
 
     fn set(&mut self, x: usize, y: usize, z: usize, block: BlockId) {
-        let palette_index = self.palette.index(block);
+        let palette_index = self.palette.index(&block);
         let idx = y * SECTION_SIDE * SECTION_SIDE + z * SECTION_SIDE + x;
         self.indices[idx] = palette_index;
         if block != BlockId::Air {
@@ -303,7 +308,7 @@ impl SectionBuilder {
         Some(SectionNbt {
             y: self.y,
             block_states: BlockStatesNbt::from_palette(self.palette, &self.indices),
-            biomes: BiomesNbt::uniform("minecraft:plains"),
+            biomes: BiomesNbt::uniform(self.base_biome.as_ref()),
         })
     }
 }
@@ -321,13 +326,13 @@ impl PaletteBuilder {
         }
     }
 
-    fn index(&mut self, block: BlockId) -> u16 {
-        if let Some(idx) = self.lookup.get(&block) {
+    fn index(&mut self, block: &BlockId) -> u16 {
+        if let Some(idx) = self.lookup.get(block) {
             *idx
         } else {
             let idx = self.entries.len() as u16;
-            self.entries.push(block);
-            self.lookup.insert(block, idx);
+            self.entries.push(block.clone());
+            self.lookup.insert(block.clone(), idx);
             idx
         }
     }
