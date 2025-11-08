@@ -19,31 +19,73 @@ const BIOME_SCALE: usize = SECTION_SIDE / BIOME_SIDE;
 const BIOME_ENTRIES_PER_SECTION: usize = BIOME_SIDE * BIOME_SIDE * BIOME_SIDE;
 const _: [(); SECTION_SIDE % 4] = [];
 
-pub struct ChunkHeights {
-    heights: [Option<i32>; SECTION_SIDE * SECTION_SIDE],
-    slope_angles: [f32; SECTION_SIDE * SECTION_SIDE],
+#[derive(Clone)]
+pub struct SlopeProfile {
+    stats: Vec<SlopeStats>,
 }
 
-impl ChunkHeights {
-    pub fn new() -> Self {
+impl SlopeProfile {
+    pub fn empty(levels: usize) -> Self {
+        if levels == 0 {
+            return Self { stats: Vec::new() };
+        }
         Self {
-            heights: [None; SECTION_SIDE * SECTION_SIDE],
-            slope_angles: [0.0; SECTION_SIDE * SECTION_SIDE],
+            stats: vec![SlopeStats::default(); levels],
         }
     }
 
-    pub fn set(&mut self, x: usize, z: usize, height: i32, slope_degrees: f32) {
+    pub fn from_stats(stats: Vec<SlopeStats>) -> Self {
+        Self { stats }
+    }
+
+    pub fn evaluate(&self, settings: &CliffSettings) -> f32 {
+        if self.stats.is_empty() {
+            return 0.0;
+        }
+        let radius = settings.smoothing_radius.max(1) as usize;
+        let idx = radius.saturating_sub(1).min(self.stats.len() - 1);
+        let entry = &self.stats[idx];
+        let factor = settings.smoothing_factor.clamp(0.0, 1.0) as f32;
+        entry.max_angle + (entry.weighted_average - entry.max_angle) * factor
+    }
+}
+
+#[derive(Clone, Default)]
+pub struct SlopeStats {
+    pub max_angle: f32,
+    pub weighted_average: f32,
+}
+
+pub struct ChunkHeights {
+    heights: [Option<i32>; SECTION_SIDE * SECTION_SIDE],
+    slopes: Vec<SlopeProfile>,
+}
+
+impl ChunkHeights {
+    pub fn new(max_smoothing_radius: usize) -> Self {
+        let mut slopes = Vec::with_capacity(SECTION_SIDE * SECTION_SIDE);
+        for _ in 0..SECTION_SIDE * SECTION_SIDE {
+            slopes.push(SlopeProfile::empty(max_smoothing_radius));
+        }
+        Self {
+            heights: [None; SECTION_SIDE * SECTION_SIDE],
+            slopes,
+        }
+    }
+
+    pub fn set(&mut self, x: usize, z: usize, height: i32, slope_profile: SlopeProfile) {
         let idx = z * SECTION_SIDE + x;
         self.heights[idx] = Some(height);
-        self.slope_angles[idx] = slope_degrees;
+        self.slopes[idx] = slope_profile;
     }
 
     pub fn column(&self, x: usize, z: usize) -> Option<i32> {
         self.heights[z * SECTION_SIDE + x]
     }
 
-    pub fn slope(&self, x: usize, z: usize) -> f32 {
-        self.slope_angles[z * SECTION_SIDE + x]
+    pub fn slope(&self, x: usize, z: usize, settings: &CliffSettings) -> f32 {
+        let idx = z * SECTION_SIDE + x;
+        self.slopes[idx].evaluate(settings)
     }
 
     pub fn max_height(&self) -> Option<i32> {
@@ -194,7 +236,6 @@ fn build_sections(
     for local_z in 0..SECTION_SIDE {
         for local_x in 0..SECTION_SIDE {
             let height = columns.column(local_x, local_z);
-            let slope_degrees = columns.slope(local_x, local_z);
             let (biome, top_block, cliff) = match height {
                 Some(surface) => {
                     let (biome, cliff) = terrain.biome_and_cliff_for_height(surface);
@@ -206,6 +247,10 @@ fn build_sections(
                     Arc::clone(&default_top_block),
                     None,
                 ),
+            };
+            let slope_degrees = match (&height, &cliff) {
+                (Some(_), Some(settings)) => columns.slope(local_x, local_z, settings),
+                _ => 0.0,
             };
             column_settings.push(ColumnSettings {
                 height,

@@ -61,6 +61,21 @@ impl TerrainConfig {
         (biome, cliff)
     }
 
+    pub fn max_smoothing_radius(&self) -> u32 {
+        if !self.cliffs.enabled() {
+            return 0;
+        }
+        let mut max_radius = self.cliffs.default_radius();
+        for layer in &self.biome_layers {
+            if let Some(override_cfg) = &layer.cliff_override {
+                if let Some(radius) = override_cfg.smoothing_radius {
+                    max_radius = max_radius.max(radius);
+                }
+            }
+        }
+        max_radius
+    }
+
     pub fn top_block_for_height(&self, surface_height: i32) -> Arc<str> {
         match self
             .top_block_layers
@@ -149,6 +164,14 @@ fn default_base_biome() -> String {
     "minecraft:plains".to_string()
 }
 
+fn default_smoothing_radius() -> u32 {
+    1
+}
+
+fn default_smoothing_factor() -> f64 {
+    0.0
+}
+
 fn default_cliff_angle() -> f64 {
     60.0
 }
@@ -166,6 +189,10 @@ struct BiomeLayerFile {
     cliff_angle_threshold_degrees: Option<f64>,
     #[serde(default)]
     cliff_block: Option<String>,
+    #[serde(default)]
+    cliff_smoothing_radius: Option<u32>,
+    #[serde(default)]
+    cliff_smoothing_factor: Option<f64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -183,6 +210,10 @@ struct CliffGenerationFile {
     angle_threshold_degrees: f64,
     #[serde(default = "default_cliff_block")]
     block: String,
+    #[serde(default = "default_smoothing_radius")]
+    smoothing_radius: u32,
+    #[serde(default = "default_smoothing_factor")]
+    smoothing_factor: f64,
 }
 
 impl Default for CliffGenerationFile {
@@ -191,6 +222,8 @@ impl Default for CliffGenerationFile {
             enabled: false,
             angle_threshold_degrees: default_cliff_angle(),
             block: default_cliff_block(),
+            smoothing_radius: default_smoothing_radius(),
+            smoothing_factor: default_smoothing_factor(),
         }
     }
 }
@@ -207,12 +240,16 @@ struct RangeFile {
 pub struct CliffSettings {
     pub angle_threshold_degrees: f64,
     pub block: Arc<str>,
+    pub smoothing_radius: u32,
+    pub smoothing_factor: f64,
 }
 
 #[derive(Debug, Clone)]
 struct CliffOverride {
     angle_threshold_degrees: Option<f64>,
     block: Option<Arc<str>>,
+    smoothing_radius: Option<u32>,
+    smoothing_factor: Option<f64>,
 }
 
 #[derive(Debug, Clone)]
@@ -229,11 +266,19 @@ impl CliffConfig {
         if file.block.trim().is_empty() {
             bail!("cliff_generation.block must not be empty");
         }
+        if file.smoothing_radius == 0 {
+            bail!("cliff_generation.smoothing_radius must be at least 1");
+        }
+        if !(0.0..=1.0).contains(&file.smoothing_factor) {
+            bail!("cliff_generation.smoothing_factor must be between 0 and 1");
+        }
         Ok(Self {
             enabled: file.enabled,
             default_settings: CliffSettings {
                 angle_threshold_degrees: file.angle_threshold_degrees,
                 block: Arc::<str>::from(file.block),
+                smoothing_radius: file.smoothing_radius,
+                smoothing_factor: file.smoothing_factor,
             },
         })
     }
@@ -250,8 +295,22 @@ impl CliffConfig {
             if let Some(block) = &overrides.block {
                 resolved.block = Arc::clone(block);
             }
+            if let Some(radius) = overrides.smoothing_radius {
+                resolved.smoothing_radius = radius;
+            }
+            if let Some(factor) = overrides.smoothing_factor {
+                resolved.smoothing_factor = factor;
+            }
         }
         Some(resolved)
+    }
+
+    fn enabled(&self) -> bool {
+        self.enabled
+    }
+
+    fn default_radius(&self) -> u32 {
+        self.default_settings.smoothing_radius
     }
 }
 
@@ -262,6 +321,8 @@ impl Default for CliffConfig {
             default_settings: CliffSettings {
                 angle_threshold_degrees: default_cliff_angle(),
                 block: Arc::<str>::from(default_cliff_block()),
+                smoothing_radius: default_smoothing_radius(),
+                smoothing_factor: default_smoothing_factor(),
             },
         }
     }
@@ -299,8 +360,12 @@ fn parse_biome_layer(file: BiomeLayerFile) -> Result<BiomeLayer> {
         bail!("Biome layer value must not be empty");
     }
     let range = parse_range(file.range)?;
-    let cliff_override =
-        parse_cliff_override(file.cliff_angle_threshold_degrees, file.cliff_block)?;
+    let cliff_override = parse_cliff_override(
+        file.cliff_angle_threshold_degrees,
+        file.cliff_block,
+        file.cliff_smoothing_radius,
+        file.cliff_smoothing_factor,
+    )?;
     Ok(BiomeLayer {
         min: range.0,
         max: range.1,
@@ -324,8 +389,14 @@ fn parse_top_block_layer(file: TopBlockLayerFile) -> Result<TopBlockLayer> {
 fn parse_cliff_override(
     angle: Option<f64>,
     block: Option<String>,
+    smoothing_radius: Option<u32>,
+    smoothing_factor: Option<f64>,
 ) -> Result<Option<CliffOverride>> {
-    if angle.is_none() && block.is_none() {
+    if angle.is_none()
+        && block.is_none()
+        && smoothing_radius.is_none()
+        && smoothing_factor.is_none()
+    {
         return Ok(None);
     }
     if let Some(value) = angle {
@@ -342,9 +413,21 @@ fn parse_cliff_override(
         }
         None => None,
     };
+    if let Some(radius) = smoothing_radius {
+        if radius == 0 {
+            bail!("cliff_smoothing_radius must be at least 1 when provided");
+        }
+    }
+    if let Some(factor) = smoothing_factor {
+        if !(0.0..=1.0).contains(&factor) {
+            bail!("cliff_smoothing_factor must be between 0 and 1 when provided");
+        }
+    }
     Ok(Some(CliffOverride {
         angle_threshold_degrees: angle,
         block,
+        smoothing_radius,
+        smoothing_factor,
     }))
 }
 

@@ -77,11 +77,6 @@ pub fn run_generate(config: &GenerateConfig) -> Result<()> {
         return Ok(());
     }
 
-    let sample_count = builder.sample_count();
-    let column_count = builder.column_count();
-    let chunks = builder.into_chunks();
-    let chunk_count = chunks.len();
-
     let terrain_config = match &config.terrain_config {
         Some(path) => {
             let config = TerrainConfig::load_from_path(path)?;
@@ -94,6 +89,12 @@ pub fn run_generate(config: &GenerateConfig) -> Result<()> {
         }
         None => TerrainConfig::default(),
     };
+
+    let sample_count = builder.sample_count();
+    let column_count = builder.column_count();
+    let max_radius = terrain_config.max_smoothing_radius();
+    let chunks = builder.into_chunks(max_radius);
+    let chunk_count = chunks.len();
 
     let write_stats = write_regions(output, &chunks, &terrain_config)?;
     print_summary(Summary {

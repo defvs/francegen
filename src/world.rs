@@ -1,11 +1,10 @@
 use std::collections::HashMap;
-use std::f64::consts::SQRT_2;
 use std::path::Path;
 
 use anyhow::Result;
 use geo_types::Coord;
 
-use crate::chunk::ChunkHeights;
+use crate::chunk::{ChunkHeights, SlopeProfile, SlopeStats};
 use crate::constants::{BEDROCK_Y, MAX_WORLD_Y, SECTION_SIDE};
 use crate::georaster::GeoRaster;
 
@@ -117,19 +116,20 @@ impl WorldBuilder {
         self.origin
     }
 
-    pub fn into_chunks(self) -> HashMap<(i32, i32), ChunkHeights> {
+    pub fn into_chunks(self, max_smoothing_radius: u32) -> HashMap<(i32, i32), ChunkHeights> {
         let columns = self.columns;
         let mut chunks: HashMap<(i32, i32), ChunkHeights> = HashMap::new();
+        let radius = max_smoothing_radius as i32;
         for (&(x, z), &height) in columns.iter() {
             let chunk_x = x.div_euclid(SECTION_SIDE as i32);
             let chunk_z = z.div_euclid(SECTION_SIDE as i32);
             let local_x = x.rem_euclid(SECTION_SIDE as i32) as usize;
             let local_z = z.rem_euclid(SECTION_SIDE as i32) as usize;
-            let slope = max_slope_degrees(x, z, height, &columns);
+            let slope_profile = slope_profile_for(x, z, height, &columns, radius);
             let entry = chunks
                 .entry((chunk_x, chunk_z))
-                .or_insert_with(ChunkHeights::new);
-            entry.set(local_x, local_z, height, slope);
+                .or_insert_with(|| ChunkHeights::new(max_smoothing_radius as usize));
+            entry.set(local_x, local_z, height, slope_profile);
         }
         chunks
     }
@@ -172,28 +172,57 @@ fn model_to_world(origin: &Coord, coord: &Coord) -> (i32, i32) {
     (dx.round() as i32, dz.round() as i32)
 }
 
-fn max_slope_degrees(x: i32, z: i32, height: i32, columns: &HashMap<(i32, i32), i32>) -> f32 {
-    const NEIGHBORS: &[(i32, i32, f64)] = &[
-        (1, 0, 1.0),
-        (-1, 0, 1.0),
-        (0, 1, 1.0),
-        (0, -1, 1.0),
-        (1, 1, SQRT_2),
-        (1, -1, SQRT_2),
-        (-1, 1, SQRT_2),
-        (-1, -1, SQRT_2),
-    ];
-    let mut max_angle = 0.0;
-    for &(dx, dz, horizontal) in NEIGHBORS {
-        if let Some(neighbor_height) = columns.get(&(x + dx, z + dz)) {
-            let diff = (height - *neighbor_height).abs() as f64;
-            let angle = (diff / horizontal).atan().to_degrees();
-            if angle > max_angle {
-                max_angle = angle;
+fn slope_profile_for(
+    x: i32,
+    z: i32,
+    height: i32,
+    columns: &HashMap<(i32, i32), i32>,
+    max_radius: i32,
+) -> SlopeProfile {
+    if max_radius <= 0 {
+        return SlopeProfile::empty(0);
+    }
+    let mut stats = Vec::with_capacity(max_radius as usize);
+    let mut max_angle = 0.0f32;
+    let mut weighted_sum = 0.0f64;
+    let mut weight_total = 0.0f64;
+    for radius in 1..=max_radius {
+        let r = radius as i32;
+        for dz in -r..=r {
+            for dx in -r..=r {
+                if dx == 0 && dz == 0 {
+                    continue;
+                }
+                if dx.abs().max(dz.abs()) != r {
+                    continue;
+                }
+                if let Some(neighbor_height) = columns.get(&(x + dx, z + dz)) {
+                    let horizontal = ((dx * dx + dz * dz) as f64).sqrt();
+                    if horizontal == 0.0 {
+                        continue;
+                    }
+                    let diff = (height - *neighbor_height).abs() as f64;
+                    let angle = (diff / horizontal).atan().to_degrees() as f32;
+                    if angle > max_angle {
+                        max_angle = angle;
+                    }
+                    let weight = 1.0 / horizontal;
+                    weighted_sum += angle as f64 * weight;
+                    weight_total += weight;
+                }
             }
         }
+        let weighted_average = if weight_total > 0.0 {
+            (weighted_sum / weight_total) as f32
+        } else {
+            0.0
+        };
+        stats.push(SlopeStats {
+            max_angle,
+            weighted_average,
+        });
     }
-    max_angle as f32
+    SlopeProfile::from_stats(stats)
 }
 
 pub fn dem_to_minecraft(value: f64) -> i32 {

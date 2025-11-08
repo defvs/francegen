@@ -6,10 +6,12 @@
   "cliff_generation": {
     "enabled": true,
     "angle_threshold_degrees": 55.0,
-    "block": "minecraft:stone"
+    "block": "minecraft:stone",
+    "smoothing_radius": 2,
+    "smoothing_factor": 0.35
   },
   "biome_layers": [
-    { "range": { "min": "3300m" },                 "biome": "minecraft:frozen_peaks", "cliff_angle_threshold_degrees": 40.0 },
+    { "range": { "min": "3300m" },                 "biome": "minecraft:frozen_peaks" },
     { "range": { "min": "2500m", "max": "3300m" }, "biome": "minecraft:snowy_slopes" },
     { "range": { "min": "1800m", "max": "2500m" }, "biome": "minecraft:stony_peaks" },
     { "range": { "min": "1200m", "max": "1800m" }, "biome": "minecraft:windswept_hills" },
