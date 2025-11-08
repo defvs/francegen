@@ -4,15 +4,17 @@ use std::cmp::max;
 use std::collections::HashMap;
 use std::fs::{self, File};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::Duration;
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result, anyhow, bail};
 use fastanvil::Region;
 use fastnbt::{self, LongArray};
 use geo_types::Coord;
 use georaster::GeoRaster;
 use indicatif::{ProgressBar, ProgressStyle};
 use owo_colors::OwoColorize;
+use rayon::{ThreadPoolBuilder, prelude::*};
 use serde::Serialize;
 
 const BEDROCK_Y: i32 = -2048;
@@ -22,14 +24,17 @@ const BLOCKS_PER_SECTION: usize = SECTION_SIDE * SECTION_SIDE * SECTION_SIDE;
 const DATA_VERSION: i32 = 3120; // Minecraft 1.20.4
 
 fn main() -> Result<()> {
-    let mut args = std::env::args().skip(1).collect::<Vec<_>>();
-    if args.len() != 2 {
-        eprintln!("Usage: francegen <tif-folder> <output-world>");
-        std::process::exit(1);
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    let config = parse_args(&args)?;
+
+    if let Some(threads) = config.threads {
+        ThreadPoolBuilder::new()
+            .num_threads(threads)
+            .build_global()
+            .map_err(|err| anyhow!("Failed to configure thread pool: {err}"))?;
     }
-    let output = PathBuf::from(args.pop().unwrap());
-    let input = PathBuf::from(args.pop().unwrap());
-    run(&input, &output)
+
+    run(&config.input, &config.output)
 }
 
 fn run(input: &Path, output: &Path) -> Result<()> {
@@ -52,6 +57,10 @@ fn run(input: &Path, output: &Path) -> Result<()> {
         ingest_pb.inc(1);
     }
     ingest_pb.finish_with_message("GeoTIFFs loaded");
+
+    if let Some(stats) = builder.stats() {
+        print_ingest_stats(&stats);
+    }
 
     let sample_count = builder.sample_count();
     let column_count = builder.column_count();
@@ -117,6 +126,76 @@ fn progress_bar(total: u64, label: &str) -> ProgressBar {
     }
 }
 
+const USAGE: &str = "Usage: francegen [--threads <N>] <tif-folder> <output-world>";
+
+struct Config {
+    input: PathBuf,
+    output: PathBuf,
+    threads: Option<usize>,
+}
+
+fn parse_args(args: &[String]) -> Result<Config> {
+    let mut input = None;
+    let mut output = None;
+    let mut threads = None;
+
+    let mut i = 0;
+    while i < args.len() {
+        let arg = &args[i];
+        if arg == "--help" || arg == "-h" {
+            println!("{USAGE}");
+            std::process::exit(0);
+        } else if arg == "--threads" {
+            i += 1;
+            if i >= args.len() {
+                bail!("Missing value for --threads\n{USAGE}");
+            }
+            threads = Some(parse_threads(&args[i])?);
+        } else if let Some(value) = arg.strip_prefix("--threads=") {
+            threads = Some(parse_threads(value)?);
+        } else if input.is_none() {
+            input = Some(PathBuf::from(arg));
+        } else if output.is_none() {
+            output = Some(PathBuf::from(arg));
+        } else {
+            bail!("Unexpected argument: {arg}\n{USAGE}");
+        }
+        i += 1;
+    }
+
+    let input = input.ok_or_else(|| anyhow!("Missing input directory argument.\n{USAGE}"))?;
+    let output = output.ok_or_else(|| anyhow!("Missing output directory argument.\n{USAGE}"))?;
+
+    Ok(Config {
+        input,
+        output,
+        threads,
+    })
+}
+
+fn parse_threads(value: &str) -> Result<usize> {
+    let threads: usize = value
+        .parse()
+        .map_err(|_| anyhow!("Invalid thread count '{value}'"))?;
+    if threads == 0 {
+        bail!("Thread count must be > 0");
+    }
+    Ok(threads)
+}
+
+struct WorldStats {
+    width: usize,
+    depth: usize,
+    min_height: f64,
+    max_height: f64,
+    min_x: i32,
+    max_x: i32,
+    min_z: i32,
+    max_z: i32,
+    center_x: f64,
+    center_z: f64,
+}
+
 struct Summary<'a> {
     input_dir: &'a Path,
     output_dir: &'a Path,
@@ -126,6 +205,39 @@ struct Summary<'a> {
     chunks: usize,
     region_files: usize,
     chunks_written: usize,
+}
+
+fn print_ingest_stats(stats: &WorldStats) {
+    println!();
+    println!(
+        "{} Expected world size: {} x {} blocks ({:.1} x {:.1} chunks)",
+        "ℹ".blue().bold(),
+        stats.width,
+        stats.depth,
+        stats.width as f64 / 16.0,
+        stats.depth as f64 / 16.0
+    );
+    println!(
+        "  {} Heights: min {:.2} m, max {:.2} m",
+        "↕".blue(),
+        stats.min_height,
+        stats.max_height
+    );
+    println!(
+        "  {} World bounds X:[{}..{}], Z:[{}..{}]",
+        "⬚".blue(),
+        stats.min_x,
+        stats.max_x,
+        stats.min_z,
+        stats.max_z
+    );
+    println!(
+        "  {} Center: ({:.1}, {:.1})",
+        "◎".blue(),
+        stats.center_x,
+        stats.center_z
+    );
+    println!();
 }
 
 fn print_summary(summary: Summary<'_>) {
@@ -172,6 +284,12 @@ struct WorldBuilder {
     origin: Option<Coord>,
     columns: HashMap<(i32, i32), i32>,
     samples: usize,
+    min_x: i32,
+    max_x: i32,
+    min_z: i32,
+    max_z: i32,
+    min_height: f64,
+    max_height: f64,
 }
 
 impl WorldBuilder {
@@ -180,6 +298,12 @@ impl WorldBuilder {
             origin: None,
             columns: HashMap::new(),
             samples: 0,
+            min_x: i32::MAX,
+            max_x: i32::MIN,
+            min_z: i32::MAX,
+            max_z: i32::MIN,
+            min_height: f64::INFINITY,
+            max_height: f64::NEG_INFINITY,
         }
     }
 
@@ -217,8 +341,40 @@ impl WorldBuilder {
                 let (world_x, world_z) = model_to_world(&origin, &coord);
                 let mc_height = dem_to_minecraft(height_value);
                 self.columns.insert((world_x, world_z), mc_height);
+                self.update_stats(world_x, world_z, height_value);
             }
         }
+    }
+
+    fn update_stats(&mut self, x: i32, z: i32, height_value: f64) {
+        self.min_x = self.min_x.min(x);
+        self.max_x = self.max_x.max(x);
+        self.min_z = self.min_z.min(z);
+        self.max_z = self.max_z.max(z);
+        self.min_height = self.min_height.min(height_value);
+        self.max_height = self.max_height.max(height_value);
+    }
+
+    fn stats(&self) -> Option<WorldStats> {
+        if self.columns.is_empty() {
+            return None;
+        }
+        let width = (self.max_x - self.min_x + 1).max(0) as usize;
+        let depth = (self.max_z - self.min_z + 1).max(0) as usize;
+        let center_x = (self.min_x + self.max_x) as f64 / 2.0;
+        let center_z = (self.min_z + self.max_z) as f64 / 2.0;
+        Some(WorldStats {
+            width,
+            depth,
+            min_height: self.min_height,
+            max_height: self.max_height,
+            min_x: self.min_x,
+            max_x: self.max_x,
+            min_z: self.min_z,
+            max_z: self.max_z,
+            center_x,
+            center_z,
+        })
     }
 
     fn into_chunks(self) -> HashMap<(i32, i32), ChunkHeights> {
@@ -290,49 +446,60 @@ fn write_regions(output: &Path, chunks: &HashMap<(i32, i32), ChunkHeights>) -> R
     fs::create_dir_all(&region_dir)
         .with_context(|| format!("Failed to create region directory {}", region_dir.display()))?;
 
-    let mut region_cache: HashMap<(i32, i32), Region<File>> = HashMap::new();
-    let mut region_creations = 0usize;
-    let mut written_chunks = 0usize;
-
-    let mut keys: Vec<(i32, i32)> = chunks.keys().copied().collect();
-    keys.sort();
-
-    let pb = progress_bar(keys.len() as u64, "Writing chunks");
-    for (chunk_x, chunk_z) in keys {
-        pb.set_message(format!("Chunk {chunk_x},{chunk_z}"));
-        let columns = &chunks[&(chunk_x, chunk_z)];
-        let Some(chunk_bytes) = build_chunk_bytes(chunk_x, chunk_z, columns)? else {
-            pb.inc(1);
-            continue;
-        };
-
+    let mut per_region: HashMap<(i32, i32), Vec<(i32, i32)>> = HashMap::new();
+    for (&(chunk_x, chunk_z), _) in chunks.iter() {
         let region_x = chunk_x.div_euclid(32);
         let region_z = chunk_z.div_euclid(32);
-        let local_x = chunk_x.rem_euclid(32) as usize;
-        let local_z = chunk_z.rem_euclid(32) as usize;
-
-        use std::collections::hash_map::Entry;
-        let region = match region_cache.entry((region_x, region_z)) {
-            Entry::Occupied(entry) => entry.into_mut(),
-            Entry::Vacant(entry) => {
-                region_creations += 1;
-                let region = create_region(&region_dir, region_x, region_z)?;
-                entry.insert(region)
-            }
-        };
-
-        region
-            .write_chunk(local_x, local_z, &chunk_bytes)
-            .with_context(|| format!("Failed to write chunk at ({chunk_x}, {chunk_z})"))?;
-        written_chunks += 1;
-        pb.inc(1);
+        per_region
+            .entry((region_x, region_z))
+            .or_default()
+            .push((chunk_x, chunk_z));
     }
 
+    let total_chunks: usize = per_region.values().map(|v| v.len()).sum();
+    if total_chunks == 0 {
+        return Ok(WriteStats {
+            region_files: 0,
+            chunks_written: 0,
+        });
+    }
+
+    let pb = Arc::new(progress_bar(total_chunks as u64, "Writing chunks"));
+    let region_dir = Arc::new(region_dir);
+    let region_file_count = per_region.len();
+
+    let chunks_written = per_region
+        .into_par_iter()
+        .map(|((region_x, region_z), coords)| -> Result<usize> {
+            let pb = pb.clone();
+            let mut region = create_region(region_dir.as_ref(), region_x, region_z)?;
+            let mut written = 0usize;
+            for (chunk_x, chunk_z) in coords {
+                if let Some(columns) = chunks.get(&(chunk_x, chunk_z)) {
+                    if let Some(data) = build_chunk_bytes(chunk_x, chunk_z, columns)? {
+                        let local_x = chunk_x.rem_euclid(32) as usize;
+                        let local_z = chunk_z.rem_euclid(32) as usize;
+                        region
+                            .write_chunk(local_x, local_z, &data)
+                            .with_context(|| {
+                                format!("Failed to write chunk at ({chunk_x}, {chunk_z})")
+                            })?;
+                        written += 1;
+                    }
+                }
+                pb.inc(1);
+            }
+            Ok(written)
+        })
+        .collect::<Result<Vec<_>>>()?
+        .into_iter()
+        .sum();
+
     pb.finish_with_message("Chunks finalized");
-    drop(region_cache);
+
     Ok(WriteStats {
-        region_files: region_creations,
-        chunks_written: written_chunks,
+        region_files: region_file_count,
+        chunks_written,
     })
 }
 
