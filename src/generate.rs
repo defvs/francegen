@@ -7,6 +7,7 @@ use owo_colors::OwoColorize;
 
 use crate::chunk::write_regions;
 use crate::cli::GenerateConfig;
+use crate::config::TerrainConfig;
 use crate::constants::{BEDROCK_Y, MAX_WORLD_Y};
 use crate::metadata::write_metadata;
 use crate::progress::progress_bar;
@@ -25,8 +26,19 @@ pub fn run_generate(config: &GenerateConfig) -> Result<()> {
     }
     tif_paths.sort();
 
+    if let Some(bounds) = config.bounds {
+        println!(
+            "{} Limiting to model bounds X:[{:.3}..{:.3}] Z:[{:.3}..{:.3}]",
+            "ℹ".blue().bold(),
+            bounds.min_x,
+            bounds.max_x,
+            bounds.min_z,
+            bounds.max_z
+        );
+    }
+
     let ingest_pb = progress_bar(tif_paths.len() as u64, "Ingesting tiles");
-    let mut builder = WorldBuilder::new();
+    let mut builder = WorldBuilder::new(config.bounds);
     for path in &tif_paths {
         let msg = path
             .file_name()
@@ -70,7 +82,20 @@ pub fn run_generate(config: &GenerateConfig) -> Result<()> {
     let chunks = builder.into_chunks();
     let chunk_count = chunks.len();
 
-    let write_stats = write_regions(output, &chunks)?;
+    let terrain_config = match &config.terrain_config {
+        Some(path) => {
+            let config = TerrainConfig::load_from_path(path)?;
+            println!(
+                "{} Loaded terrain config: {}",
+                "ℹ".blue().bold(),
+                path.display()
+            );
+            config
+        }
+        None => TerrainConfig::default(),
+    };
+
+    let write_stats = write_regions(output, &chunks, &terrain_config)?;
     print_summary(Summary {
         input_dir: input,
         output_dir: output,
@@ -90,7 +115,7 @@ pub fn run_generate(config: &GenerateConfig) -> Result<()> {
     Ok(())
 }
 
-fn collect_tifs(dir: &Path) -> Result<Vec<PathBuf>> {
+pub fn collect_tifs(dir: &Path) -> Result<Vec<PathBuf>> {
     let mut out = Vec::new();
     for entry in fs::read_dir(dir)
         .with_context(|| format!("Failed to read input directory {}", dir.display()))?

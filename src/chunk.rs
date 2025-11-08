@@ -10,8 +10,14 @@ use fastnbt::{self, LongArray};
 use rayon::prelude::*;
 use serde::Serialize;
 
+use crate::config::TerrainConfig;
 use crate::constants::{BEDROCK_Y, BLOCKS_PER_SECTION, DATA_VERSION, MAX_WORLD_Y, SECTION_SIDE};
 use crate::progress::progress_bar;
+
+const BIOME_SIDE: usize = SECTION_SIDE / 4;
+const BIOME_SCALE: usize = SECTION_SIDE / BIOME_SIDE;
+const BIOME_ENTRIES_PER_SECTION: usize = BIOME_SIDE * BIOME_SIDE * BIOME_SIDE;
+const _: [(); SECTION_SIDE % 4] = [];
 
 pub struct ChunkHeights {
     heights: [Option<i32>; SECTION_SIDE * SECTION_SIDE],
@@ -45,6 +51,7 @@ pub struct WriteStats {
 pub fn write_regions(
     output: &Path,
     chunks: &HashMap<(i32, i32), ChunkHeights>,
+    terrain: &TerrainConfig,
 ) -> Result<WriteStats> {
     if chunks.is_empty() {
         return Ok(WriteStats {
@@ -87,7 +94,7 @@ pub fn write_regions(
             let mut written = 0usize;
             for (chunk_x, chunk_z) in coords {
                 if let Some(columns) = chunks.get(&(chunk_x, chunk_z)) {
-                    if let Some(data) = build_chunk_bytes(chunk_x, chunk_z, columns)? {
+                    if let Some(data) = build_chunk_bytes(chunk_x, chunk_z, columns, terrain)? {
                         let local_x = chunk_x.rem_euclid(32) as usize;
                         let local_z = chunk_z.rem_euclid(32) as usize;
                         region
@@ -130,13 +137,14 @@ fn build_chunk_bytes(
     chunk_x: i32,
     chunk_z: i32,
     columns: &ChunkHeights,
+    terrain: &TerrainConfig,
 ) -> Result<Option<Vec<u8>>> {
     let max_height = match columns.max_height() {
         Some(value) => value,
         None => return Ok(None),
     };
 
-    let sections = build_sections(columns, max_height);
+    let sections = build_sections(columns, max_height, terrain);
     if sections.is_empty() {
         return Ok(None);
     }
@@ -160,10 +168,38 @@ fn build_chunk_bytes(
     Ok(Some(bytes))
 }
 
-fn build_sections(columns: &ChunkHeights, max_height: i32) -> Vec<SectionNbt> {
+fn build_sections(
+    columns: &ChunkHeights,
+    max_height: i32,
+    terrain: &TerrainConfig,
+) -> Vec<SectionNbt> {
     let mut sections = Vec::new();
     let min_section = BEDROCK_Y.div_euclid(SECTION_SIDE as i32);
     let max_section = max(min_section, max_height.div_euclid(SECTION_SIDE as i32));
+
+    let default_biome = terrain.base_biome();
+    let default_top_block = terrain.top_layer_block();
+    let bottom_block = terrain.bottom_layer_block();
+    let top_thickness = terrain.top_layer_thickness();
+
+    let mut column_settings = Vec::with_capacity(SECTION_SIDE * SECTION_SIDE);
+    for local_z in 0..SECTION_SIDE {
+        for local_x in 0..SECTION_SIDE {
+            let height = columns.column(local_x, local_z);
+            let (biome, top_block) = match height {
+                Some(surface) => (
+                    terrain.biome_for_height(surface),
+                    terrain.top_block_for_height(surface),
+                ),
+                None => (Arc::clone(&default_biome), Arc::clone(&default_top_block)),
+            };
+            column_settings.push(ColumnSettings {
+                height,
+                biome,
+                top_block,
+            });
+        }
+    }
 
     for section_y in min_section..=max_section {
         let mut builder = SectionBuilder::new(section_y as i8);
@@ -171,9 +207,9 @@ fn build_sections(columns: &ChunkHeights, max_height: i32) -> Vec<SectionNbt> {
             let world_y = section_y * SECTION_SIDE as i32 + local_y as i32;
             for local_z in 0..SECTION_SIDE {
                 for local_x in 0..SECTION_SIDE {
-                    let column_height = columns.column(local_x, local_z);
-                    let block = block_for(world_y, column_height);
-                    builder.set(local_x, local_y, local_z, block);
+                    let column = &column_settings[local_z * SECTION_SIDE + local_x];
+                    let block = block_for(world_y, column, top_thickness, &bottom_block);
+                    builder.set(local_x, local_y, local_z, block, &column.biome);
                 }
             }
         }
@@ -231,41 +267,55 @@ fn pack_unsigned(values: &[u64], bits: usize) -> Vec<i64> {
     longs
 }
 
-fn block_for(world_y: i32, height: Option<i32>) -> BlockId {
+struct ColumnSettings {
+    height: Option<i32>,
+    biome: Arc<str>,
+    top_block: Arc<str>,
+}
+
+fn block_for(
+    world_y: i32,
+    column: &ColumnSettings,
+    top_thickness: u32,
+    bottom_block: &Arc<str>,
+) -> BlockId {
     if world_y <= BEDROCK_Y {
         return BlockId::Bedrock;
     }
-    let Some(surface) = height else {
+    let Some(surface) = column.height else {
         return BlockId::Air;
     };
     if world_y > surface {
         return BlockId::Air;
     }
     let depth = surface - world_y;
-    match depth {
-        0 => BlockId::Grass,
-        1..=3 => BlockId::Dirt,
-        _ => BlockId::Stone,
+    if depth < top_thickness as i32 {
+        BlockId::Named(Arc::clone(&column.top_block))
+    } else {
+        BlockId::Named(Arc::clone(bottom_block))
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+fn biome_index(x: usize, y: usize, z: usize) -> usize {
+    let bx = x / BIOME_SCALE;
+    let by = y / BIOME_SCALE;
+    let bz = z / BIOME_SCALE;
+    by * BIOME_SIDE * BIOME_SIDE + bz * BIOME_SIDE + bx
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 enum BlockId {
     Air,
     Bedrock,
-    Stone,
-    Dirt,
-    Grass,
+    Named(Arc<str>),
 }
 
 impl BlockId {
-    fn name(self) -> &'static str {
+    fn name(&self) -> &str {
         match self {
             BlockId::Air => "minecraft:air",
             BlockId::Bedrock => "minecraft:bedrock",
-            BlockId::Stone => "minecraft:stone",
-            BlockId::Dirt => "minecraft:dirt",
-            BlockId::Grass => "minecraft:grass_block",
+            BlockId::Named(name) => name.as_ref(),
         }
     }
 }
@@ -275,6 +325,8 @@ struct SectionBuilder {
     palette: PaletteBuilder,
     indices: Vec<u16>,
     has_blocks: bool,
+    biome_palette: BiomePaletteBuilder,
+    biome_indices: Vec<u16>,
 }
 
 impl SectionBuilder {
@@ -284,16 +336,21 @@ impl SectionBuilder {
             palette: PaletteBuilder::new(),
             indices: vec![0; BLOCKS_PER_SECTION],
             has_blocks: false,
+            biome_palette: BiomePaletteBuilder::new(),
+            biome_indices: vec![0; BIOME_ENTRIES_PER_SECTION],
         }
     }
 
-    fn set(&mut self, x: usize, y: usize, z: usize, block: BlockId) {
-        let palette_index = self.palette.index(block);
+    fn set(&mut self, x: usize, y: usize, z: usize, block: BlockId, biome: &Arc<str>) {
+        let palette_index = self.palette.index(&block);
         let idx = y * SECTION_SIDE * SECTION_SIDE + z * SECTION_SIDE + x;
         self.indices[idx] = palette_index;
         if block != BlockId::Air {
             self.has_blocks = true;
         }
+        let biome_idx = biome_index(x, y, z);
+        let biome_palette_index = self.biome_palette.index(biome);
+        self.biome_indices[biome_idx] = biome_palette_index;
     }
 
     fn finish(self) -> Option<SectionNbt> {
@@ -303,7 +360,7 @@ impl SectionBuilder {
         Some(SectionNbt {
             y: self.y,
             block_states: BlockStatesNbt::from_palette(self.palette, &self.indices),
-            biomes: BiomesNbt::uniform("minecraft:plains"),
+            biomes: BiomesNbt::from_palette(self.biome_palette, &self.biome_indices),
         })
     }
 }
@@ -321,13 +378,38 @@ impl PaletteBuilder {
         }
     }
 
-    fn index(&mut self, block: BlockId) -> u16 {
-        if let Some(idx) = self.lookup.get(&block) {
+    fn index(&mut self, block: &BlockId) -> u16 {
+        if let Some(idx) = self.lookup.get(block) {
             *idx
         } else {
             let idx = self.entries.len() as u16;
-            self.entries.push(block);
-            self.lookup.insert(block, idx);
+            self.entries.push(block.clone());
+            self.lookup.insert(block.clone(), idx);
+            idx
+        }
+    }
+}
+
+struct BiomePaletteBuilder {
+    entries: Vec<Arc<str>>,
+    lookup: HashMap<Arc<str>, u16>,
+}
+
+impl BiomePaletteBuilder {
+    fn new() -> Self {
+        Self {
+            entries: Vec::new(),
+            lookup: HashMap::new(),
+        }
+    }
+
+    fn index(&mut self, biome: &Arc<str>) -> u16 {
+        if let Some(idx) = self.lookup.get(biome) {
+            *idx
+        } else {
+            let idx = self.entries.len() as u16;
+            self.entries.push(Arc::clone(biome));
+            self.lookup.insert(Arc::clone(biome), idx);
             idx
         }
     }
@@ -381,7 +463,7 @@ impl BlockStatesNbt {
                 name: id.name().to_string(),
             })
             .collect::<Vec<_>>();
-        let data = pack_palette_indices(indices, palette_entries.len());
+        let data = pack_palette_indices(indices, palette_entries.len(), 4);
         Self {
             palette: palette_entries,
             data,
@@ -389,16 +471,16 @@ impl BlockStatesNbt {
     }
 }
 
-fn pack_palette_indices(indices: &[u16], palette_len: usize) -> Option<Vec<i64>> {
+fn pack_palette_indices(indices: &[u16], palette_len: usize, min_bits: usize) -> Option<Vec<i64>> {
     if palette_len <= 1 {
         return None;
     }
-    let bits_per_block = max(4, bits_for_range(palette_len));
-    let values_per_long = 64 / bits_per_block;
+    let bits_per_value = max(min_bits, bits_for_range(palette_len));
+    let values_per_long = 64 / bits_per_value;
     let mut longs = vec![0i64; (indices.len() + values_per_long - 1) / values_per_long];
     for (i, &value) in indices.iter().enumerate() {
         let idx = i / values_per_long;
-        let offset = (i % values_per_long) * bits_per_block;
+        let offset = (i % values_per_long) * bits_per_value;
         longs[idx] |= (value as i64) << offset;
     }
     Some(longs)
@@ -412,26 +494,24 @@ struct PaletteBlock {
 
 #[derive(Serialize)]
 struct BiomesNbt {
-    palette: Vec<BiomeEntry>,
+    palette: Vec<String>,
     #[serde(rename = "data", skip_serializing_if = "Option::is_none")]
     data: Option<Vec<i64>>,
 }
 
 impl BiomesNbt {
-    fn uniform(name: &str) -> Self {
+    fn from_palette(palette: BiomePaletteBuilder, indices: &[u16]) -> Self {
+        let palette_entries = palette
+            .entries
+            .iter()
+            .map(|name| name.to_string())
+            .collect::<Vec<_>>();
+        let data = pack_palette_indices(indices, palette_entries.len(), 1);
         Self {
-            palette: vec![BiomeEntry {
-                name: name.to_string(),
-            }],
-            data: None,
+            palette: palette_entries,
+            data,
         }
     }
-}
-
-#[derive(Serialize)]
-struct BiomeEntry {
-    #[serde(rename = "Name")]
-    name: String,
 }
 
 #[derive(Serialize)]
