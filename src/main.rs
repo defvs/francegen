@@ -15,29 +15,38 @@ use georaster::GeoRaster;
 use indicatif::{ProgressBar, ProgressStyle};
 use owo_colors::OwoColorize;
 use rayon::{ThreadPoolBuilder, prelude::*};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 const BEDROCK_Y: i32 = -2048;
 const MAX_WORLD_Y: i32 = 2031;
 const SECTION_SIDE: usize = 16;
 const BLOCKS_PER_SECTION: usize = SECTION_SIDE * SECTION_SIDE * SECTION_SIDE;
 const DATA_VERSION: i32 = 3120; // Minecraft 1.20.4
+const META_FILE: &str = "francegen_meta.json";
 
 fn main() -> Result<()> {
     let args: Vec<String> = std::env::args().skip(1).collect();
-    let config = parse_args(&args)?;
-
-    if let Some(threads) = config.threads {
-        ThreadPoolBuilder::new()
-            .num_threads(threads)
-            .build_global()
-            .map_err(|err| anyhow!("Failed to configure thread pool: {err}"))?;
+    match parse_args(&args)? {
+        Command::Generate(config) => {
+            if let Some(threads) = config.threads {
+                ThreadPoolBuilder::new()
+                    .num_threads(threads)
+                    .build_global()
+                    .map_err(|err| anyhow!("Failed to configure thread pool: {err}"))?;
+            }
+            run_generate(&config)
+        }
+        Command::Locate(config) => run_locate(&config),
     }
-
-    run(&config.input, &config.output)
 }
 
-fn run(input: &Path, output: &Path) -> Result<()> {
+fn run_generate(config: &GenerateConfig) -> Result<()> {
+    let input = &config.input;
+    let output = &config.output;
+
+    fs::create_dir_all(output)
+        .with_context(|| format!("Failed to create output directory {}", output.display()))?;
+
     let mut tif_paths = collect_tifs(input)?;
     if tif_paths.is_empty() {
         bail!("No .tif files found in {}", input.display());
@@ -58,8 +67,25 @@ fn run(input: &Path, output: &Path) -> Result<()> {
     }
     ingest_pb.finish_with_message("GeoTIFFs loaded");
 
-    if let Some(stats) = builder.stats() {
-        print_ingest_stats(&stats);
+    let stats = builder.stats();
+    if let Some(summary) = &stats {
+        print_ingest_stats(summary);
+    }
+    let origin = builder.origin_coord();
+
+    if config.meta_only {
+        let origin =
+            origin.ok_or_else(|| anyhow!("Origin not available; unable to write metadata"))?;
+        let stats =
+            stats.ok_or_else(|| anyhow!("No samples were ingested; metadata unavailable"))?;
+        let path = write_metadata(output, origin, &stats)?;
+        println!(
+            "{} Saved metadata only: {}",
+            "ℹ".blue().bold(),
+            path.display()
+        );
+        println!("  Skipped region generation (--meta-only).");
+        return Ok(());
     }
 
     let sample_count = builder.sample_count();
@@ -78,6 +104,53 @@ fn run(input: &Path, output: &Path) -> Result<()> {
         region_files: write_stats.region_files,
         chunks_written: write_stats.chunks_written,
     });
+
+    if let (Some(stats), Some(origin)) = (stats, origin) {
+        let path = write_metadata(output, origin, &stats)?;
+        println!("{} Saved metadata: {}", "ℹ".blue().bold(), path.display());
+    }
+
+    Ok(())
+}
+
+fn run_locate(config: &LocateConfig) -> Result<()> {
+    let metadata = load_metadata(&config.world)?;
+    let mc_x = (config.real_x - metadata.origin_model_x).round() as i32;
+    let mc_z = (config.real_z - metadata.origin_model_z).round() as i32;
+    let chunk_x = mc_x.div_euclid(SECTION_SIDE as i32);
+    let chunk_z = mc_z.div_euclid(SECTION_SIDE as i32);
+    let block_x = mc_x.rem_euclid(SECTION_SIDE as i32);
+    let block_z = mc_z.rem_euclid(SECTION_SIDE as i32);
+
+    println!(
+        "{} Located point ({:.3}, {:.3}) using metadata from {}",
+        "ℹ".blue().bold(),
+        config.real_x,
+        config.real_z,
+        metadata_path(&config.world).display()
+    );
+    println!("  Minecraft block: X={}, Z={}", mc_x, mc_z);
+    println!(
+        "  Chunk: ({}, {})  block-in-chunk: ({}, {})",
+        chunk_x, chunk_z, block_x, block_z
+    );
+
+    if let Some(real_height) = config.real_height {
+        let mc_y = dem_to_minecraft(real_height);
+        println!(
+            "  Height: real {:.2} m -> Minecraft Y {}",
+            real_height, mc_y
+        );
+    } else {
+        println!(
+            "  Provide a real-world elevation to also convert Y (e.g. append the height value)."
+        );
+    }
+
+    println!(
+        "  World bounds: X [{}..{}], Z [{}..{}]",
+        metadata.min_x, metadata.max_x, metadata.min_z, metadata.max_z
+    );
 
     Ok(())
 }
@@ -126,18 +199,44 @@ fn progress_bar(total: u64, label: &str) -> ProgressBar {
     }
 }
 
-const USAGE: &str = "Usage: francegen [--threads <N>] <tif-folder> <output-world>";
+const USAGE: &str = "Usage: francegen [--threads <N>] <tif-folder> <output-world>\n       francegen locate <world-dir> <real-x> <real-z> [<real-height>]";
 
-struct Config {
+enum Command {
+    Generate(GenerateConfig),
+    Locate(LocateConfig),
+}
+
+struct GenerateConfig {
     input: PathBuf,
     output: PathBuf,
     threads: Option<usize>,
+    meta_only: bool,
 }
 
-fn parse_args(args: &[String]) -> Result<Config> {
+struct LocateConfig {
+    world: PathBuf,
+    real_x: f64,
+    real_z: f64,
+    real_height: Option<f64>,
+}
+
+fn parse_args(args: &[String]) -> Result<Command> {
+    if args.is_empty() {
+        bail!("No arguments supplied.\n{USAGE}");
+    }
+
+    if args[0] == "locate" {
+        return parse_locate(&args[1..]).map(Command::Locate);
+    }
+
+    parse_generate(args).map(Command::Generate)
+}
+
+fn parse_generate(args: &[String]) -> Result<GenerateConfig> {
     let mut input = None;
     let mut output = None;
     let mut threads = None;
+    let mut meta_only = false;
 
     let mut i = 0;
     while i < args.len() {
@@ -153,6 +252,12 @@ fn parse_args(args: &[String]) -> Result<Config> {
             threads = Some(parse_threads(&args[i])?);
         } else if let Some(value) = arg.strip_prefix("--threads=") {
             threads = Some(parse_threads(value)?);
+        } else if arg == "--meta-only" {
+            meta_only = true;
+        } else if let Some(value) = arg.strip_prefix("--meta-only=") {
+            meta_only = value
+                .parse::<bool>()
+                .map_err(|_| anyhow!("Invalid value for --meta-only (expected true/false)"))?;
         } else if input.is_none() {
             input = Some(PathBuf::from(arg));
         } else if output.is_none() {
@@ -166,10 +271,46 @@ fn parse_args(args: &[String]) -> Result<Config> {
     let input = input.ok_or_else(|| anyhow!("Missing input directory argument.\n{USAGE}"))?;
     let output = output.ok_or_else(|| anyhow!("Missing output directory argument.\n{USAGE}"))?;
 
-    Ok(Config {
+    Ok(GenerateConfig {
         input,
         output,
         threads,
+        meta_only,
+    })
+}
+
+fn parse_locate(args: &[String]) -> Result<LocateConfig> {
+    if args.is_empty() || args[0] == "--help" || args[0] == "-h" {
+        println!("{USAGE}");
+        std::process::exit(0);
+    }
+
+    if args.len() < 3 {
+        bail!("locate requires <world-dir> <real-x> <real-z> [<real-height>]\n{USAGE}");
+    }
+
+    let world = PathBuf::from(&args[0]);
+    let real_x = args[1]
+        .parse::<f64>()
+        .map_err(|_| anyhow!("Invalid real-x '{}'", args[1]))?;
+    let real_z = args[2]
+        .parse::<f64>()
+        .map_err(|_| anyhow!("Invalid real-z '{}'", args[2]))?;
+    let real_height = if args.len() > 3 {
+        Some(
+            args[3]
+                .parse::<f64>()
+                .map_err(|_| anyhow!("Invalid real-height '{}'", args[3]))?,
+        )
+    } else {
+        None
+    };
+
+    Ok(LocateConfig {
+        world,
+        real_x,
+        real_z,
+        real_height,
     })
 }
 
@@ -183,6 +324,7 @@ fn parse_threads(value: &str) -> Result<usize> {
     Ok(threads)
 }
 
+#[derive(Clone)]
 struct WorldStats {
     width: usize,
     depth: usize,
@@ -194,6 +336,33 @@ struct WorldStats {
     max_z: i32,
     center_x: f64,
     center_z: f64,
+}
+
+#[derive(Serialize, Deserialize)]
+struct WorldMetadata {
+    origin_model_x: f64,
+    origin_model_z: f64,
+    min_x: i32,
+    max_x: i32,
+    min_z: i32,
+    max_z: i32,
+    min_height: f64,
+    max_height: f64,
+}
+
+impl WorldMetadata {
+    fn from_stats(origin: Coord, stats: &WorldStats) -> Self {
+        Self {
+            origin_model_x: origin.x,
+            origin_model_z: origin.y,
+            min_x: stats.min_x,
+            max_x: stats.max_x,
+            min_z: stats.min_z,
+            max_z: stats.max_z,
+            min_height: stats.min_height,
+            max_height: stats.max_height,
+        }
+    }
 }
 
 struct Summary<'a> {
@@ -278,6 +447,32 @@ fn print_summary(summary: Summary<'_>) {
         "Chunks written".yellow().bold(),
         summary.chunks_written
     );
+}
+
+fn write_metadata(output: &Path, origin: Coord, stats: &WorldStats) -> Result<PathBuf> {
+    let metadata = WorldMetadata::from_stats(origin, stats);
+    let path = metadata_path(output);
+    let json = serde_json::to_string_pretty(&metadata)?;
+    fs::write(&path, json)
+        .with_context(|| format!("Failed to write metadata {}", path.display()))?;
+    Ok(path)
+}
+
+fn load_metadata(world: &Path) -> Result<WorldMetadata> {
+    let meta_path = metadata_path(world);
+    let data = fs::read_to_string(&meta_path)
+        .with_context(|| format!("Failed to read metadata {}", meta_path.display()))?;
+    let metadata = serde_json::from_str(&data)
+        .with_context(|| format!("Failed to parse metadata {}", meta_path.display()))?;
+    Ok(metadata)
+}
+
+fn metadata_path(base: &Path) -> PathBuf {
+    if base.is_dir() {
+        base.join(META_FILE)
+    } else {
+        base.to_path_buf()
+    }
 }
 
 struct WorldBuilder {
@@ -375,6 +570,10 @@ impl WorldBuilder {
             center_x,
             center_z,
         })
+    }
+
+    fn origin_coord(&self) -> Option<Coord> {
+        self.origin
     }
 
     fn into_chunks(self) -> HashMap<(i32, i32), ChunkHeights> {
