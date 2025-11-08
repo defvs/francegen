@@ -65,13 +65,18 @@ fn run_generate(config: &GenerateConfig) -> Result<()> {
         builder.ingest(path)?;
         ingest_pb.inc(1);
     }
-    ingest_pb.finish_with_message("GeoTIFFs loaded");
+    ingest_pb.finish_and_clear();
+    println!(
+        "{} Ingested {} GeoTIFF(s)",
+        "✔".green().bold(),
+        tif_paths.len()
+    );
 
     let stats = builder.stats();
-    if let Some(summary) = &stats {
-        print_ingest_stats(summary);
-    }
     let origin = builder.origin_coord();
+    if let Some(summary) = &stats {
+        print_ingest_stats(summary, origin);
+    }
 
     if config.meta_only {
         let origin =
@@ -376,7 +381,7 @@ struct Summary<'a> {
     chunks_written: usize,
 }
 
-fn print_ingest_stats(stats: &WorldStats) {
+fn print_ingest_stats(stats: &WorldStats, origin: Option<Coord>) {
     println!();
     println!(
         "{} Expected world size: {} x {} blocks ({:.1} x {:.1} chunks)",
@@ -386,11 +391,30 @@ fn print_ingest_stats(stats: &WorldStats) {
         stats.width as f64 / 16.0,
         stats.depth as f64 / 16.0
     );
+    let max_allowed = (MAX_WORLD_Y - BEDROCK_Y) as f64;
+    let min_clip = stats.min_height < 0.0;
+    let max_clip = stats.max_height > max_allowed;
+    let clip_note = if min_clip || max_clip {
+        let mut parts: Vec<String> = vec![];
+        if min_clip {
+            parts.push("below 0 m".to_string());
+        }
+        if max_clip {
+            parts.push(format!("above {:.0} m", max_allowed));
+        }
+        format!(
+            " {}",
+            format!("⚠ clipped {}", parts.join(" & ")).yellow().bold()
+        )
+    } else {
+        String::new()
+    };
     println!(
-        "  {} Heights: min {:.2} m, max {:.2} m",
+        "  {} Heights: min {:.2} m, max {:.2} m{}",
         "↕".blue(),
         stats.min_height,
-        stats.max_height
+        stats.max_height,
+        clip_note
     );
     println!(
         "  {} World bounds X:[{}..{}], Z:[{}..{}]",
@@ -400,6 +424,14 @@ fn print_ingest_stats(stats: &WorldStats) {
         stats.min_z,
         stats.max_z
     );
+    if let Some(origin) = origin {
+        println!(
+            "  {} Origin (model): ({:.3}, {:.3}) → MC (0, 0)",
+            "◎".blue(),
+            origin.x,
+            origin.y
+        );
+    }
     println!(
         "  {} Center: ({:.1}, {:.1})",
         "◎".blue(),
