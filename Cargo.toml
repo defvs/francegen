@@ -1,0 +1,14 @@
+[package]
+name = "francegen"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+fastanvil = "0.31.0"
+fastnbt = "2"
+serde = { version = "1", features = ["derive"] }
+anyhow = "1"
+geo-types = "0.7"
+tiff = "0.9"
+indicatif = "0.17"
+owo-colors = "3"
