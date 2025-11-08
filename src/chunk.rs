@@ -14,6 +14,11 @@ use crate::config::TerrainConfig;
 use crate::constants::{BEDROCK_Y, BLOCKS_PER_SECTION, DATA_VERSION, MAX_WORLD_Y, SECTION_SIDE};
 use crate::progress::progress_bar;
 
+const BIOME_SIDE: usize = SECTION_SIDE / 4;
+const BIOME_SCALE: usize = SECTION_SIDE / BIOME_SIDE;
+const BIOME_ENTRIES_PER_SECTION: usize = BIOME_SIDE * BIOME_SIDE * BIOME_SIDE;
+const _: [(); SECTION_SIDE % 4] = [];
+
 pub struct ChunkHeights {
     heights: [Option<i32>; SECTION_SIDE * SECTION_SIDE],
 }
@@ -172,15 +177,39 @@ fn build_sections(
     let min_section = BEDROCK_Y.div_euclid(SECTION_SIDE as i32);
     let max_section = max(min_section, max_height.div_euclid(SECTION_SIDE as i32));
 
+    let default_biome = terrain.base_biome();
+    let default_top_block = terrain.top_layer_block();
+    let bottom_block = terrain.bottom_layer_block();
+    let top_thickness = terrain.top_layer_thickness();
+
+    let mut column_settings = Vec::with_capacity(SECTION_SIDE * SECTION_SIDE);
+    for local_z in 0..SECTION_SIDE {
+        for local_x in 0..SECTION_SIDE {
+            let height = columns.column(local_x, local_z);
+            let (biome, top_block) = match height {
+                Some(surface) => (
+                    terrain.biome_for_height(surface),
+                    terrain.top_block_for_height(surface),
+                ),
+                None => (Arc::clone(&default_biome), Arc::clone(&default_top_block)),
+            };
+            column_settings.push(ColumnSettings {
+                height,
+                biome,
+                top_block,
+            });
+        }
+    }
+
     for section_y in min_section..=max_section {
-        let mut builder = SectionBuilder::new(section_y as i8, terrain.base_biome());
+        let mut builder = SectionBuilder::new(section_y as i8);
         for local_y in 0..SECTION_SIDE {
             let world_y = section_y * SECTION_SIDE as i32 + local_y as i32;
             for local_z in 0..SECTION_SIDE {
                 for local_x in 0..SECTION_SIDE {
-                    let column_height = columns.column(local_x, local_z);
-                    let block = block_for(world_y, column_height, terrain);
-                    builder.set(local_x, local_y, local_z, block);
+                    let column = &column_settings[local_z * SECTION_SIDE + local_x];
+                    let block = block_for(world_y, column, top_thickness, &bottom_block);
+                    builder.set(local_x, local_y, local_z, block, &column.biome);
                 }
             }
         }
@@ -238,22 +267,40 @@ fn pack_unsigned(values: &[u64], bits: usize) -> Vec<i64> {
     longs
 }
 
-fn block_for(world_y: i32, height: Option<i32>, terrain: &TerrainConfig) -> BlockId {
+struct ColumnSettings {
+    height: Option<i32>,
+    biome: Arc<str>,
+    top_block: Arc<str>,
+}
+
+fn block_for(
+    world_y: i32,
+    column: &ColumnSettings,
+    top_thickness: u32,
+    bottom_block: &Arc<str>,
+) -> BlockId {
     if world_y <= BEDROCK_Y {
         return BlockId::Bedrock;
     }
-    let Some(surface) = height else {
+    let Some(surface) = column.height else {
         return BlockId::Air;
     };
     if world_y > surface {
         return BlockId::Air;
     }
     let depth = surface - world_y;
-    if depth < terrain.top_layer_thickness() as i32 {
-        BlockId::Named(terrain.top_layer_block())
+    if depth < top_thickness as i32 {
+        BlockId::Named(Arc::clone(&column.top_block))
     } else {
-        BlockId::Named(terrain.bottom_layer_block())
+        BlockId::Named(Arc::clone(bottom_block))
     }
+}
+
+fn biome_index(x: usize, y: usize, z: usize) -> usize {
+    let bx = x / BIOME_SCALE;
+    let by = y / BIOME_SCALE;
+    let bz = z / BIOME_SCALE;
+    by * BIOME_SIDE * BIOME_SIDE + bz * BIOME_SIDE + bx
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -278,27 +325,32 @@ struct SectionBuilder {
     palette: PaletteBuilder,
     indices: Vec<u16>,
     has_blocks: bool,
-    base_biome: Arc<str>,
+    biome_palette: BiomePaletteBuilder,
+    biome_indices: Vec<u16>,
 }
 
 impl SectionBuilder {
-    fn new(y: i8, base_biome: Arc<str>) -> Self {
+    fn new(y: i8) -> Self {
         Self {
             y,
             palette: PaletteBuilder::new(),
             indices: vec![0; BLOCKS_PER_SECTION],
             has_blocks: false,
-            base_biome,
+            biome_palette: BiomePaletteBuilder::new(),
+            biome_indices: vec![0; BIOME_ENTRIES_PER_SECTION],
         }
     }
 
-    fn set(&mut self, x: usize, y: usize, z: usize, block: BlockId) {
+    fn set(&mut self, x: usize, y: usize, z: usize, block: BlockId, biome: &Arc<str>) {
         let palette_index = self.palette.index(&block);
         let idx = y * SECTION_SIDE * SECTION_SIDE + z * SECTION_SIDE + x;
         self.indices[idx] = palette_index;
         if block != BlockId::Air {
             self.has_blocks = true;
         }
+        let biome_idx = biome_index(x, y, z);
+        let biome_palette_index = self.biome_palette.index(biome);
+        self.biome_indices[biome_idx] = biome_palette_index;
     }
 
     fn finish(self) -> Option<SectionNbt> {
@@ -308,7 +360,7 @@ impl SectionBuilder {
         Some(SectionNbt {
             y: self.y,
             block_states: BlockStatesNbt::from_palette(self.palette, &self.indices),
-            biomes: BiomesNbt::uniform(self.base_biome.as_ref()),
+            biomes: BiomesNbt::from_palette(self.biome_palette, &self.biome_indices),
         })
     }
 }
@@ -333,6 +385,31 @@ impl PaletteBuilder {
             let idx = self.entries.len() as u16;
             self.entries.push(block.clone());
             self.lookup.insert(block.clone(), idx);
+            idx
+        }
+    }
+}
+
+struct BiomePaletteBuilder {
+    entries: Vec<Arc<str>>,
+    lookup: HashMap<Arc<str>, u16>,
+}
+
+impl BiomePaletteBuilder {
+    fn new() -> Self {
+        Self {
+            entries: Vec::new(),
+            lookup: HashMap::new(),
+        }
+    }
+
+    fn index(&mut self, biome: &Arc<str>) -> u16 {
+        if let Some(idx) = self.lookup.get(biome) {
+            *idx
+        } else {
+            let idx = self.entries.len() as u16;
+            self.entries.push(Arc::clone(biome));
+            self.lookup.insert(Arc::clone(biome), idx);
             idx
         }
     }
@@ -386,7 +463,7 @@ impl BlockStatesNbt {
                 name: id.name().to_string(),
             })
             .collect::<Vec<_>>();
-        let data = pack_palette_indices(indices, palette_entries.len());
+        let data = pack_palette_indices(indices, palette_entries.len(), 4);
         Self {
             palette: palette_entries,
             data,
@@ -394,16 +471,16 @@ impl BlockStatesNbt {
     }
 }
 
-fn pack_palette_indices(indices: &[u16], palette_len: usize) -> Option<Vec<i64>> {
+fn pack_palette_indices(indices: &[u16], palette_len: usize, min_bits: usize) -> Option<Vec<i64>> {
     if palette_len <= 1 {
         return None;
     }
-    let bits_per_block = max(4, bits_for_range(palette_len));
-    let values_per_long = 64 / bits_per_block;
+    let bits_per_value = max(min_bits, bits_for_range(palette_len));
+    let values_per_long = 64 / bits_per_value;
     let mut longs = vec![0i64; (indices.len() + values_per_long - 1) / values_per_long];
     for (i, &value) in indices.iter().enumerate() {
         let idx = i / values_per_long;
-        let offset = (i % values_per_long) * bits_per_block;
+        let offset = (i % values_per_long) * bits_per_value;
         longs[idx] |= (value as i64) << offset;
     }
     Some(longs)
@@ -423,12 +500,18 @@ struct BiomesNbt {
 }
 
 impl BiomesNbt {
-    fn uniform(name: &str) -> Self {
-        Self {
-            palette: vec![BiomeEntry {
+    fn from_palette(palette: BiomePaletteBuilder, indices: &[u16]) -> Self {
+        let palette_entries = palette
+            .entries
+            .iter()
+            .map(|name| BiomeEntry {
                 name: name.to_string(),
-            }],
-            data: None,
+            })
+            .collect::<Vec<_>>();
+        let data = pack_palette_indices(indices, palette_entries.len(), 1);
+        Self {
+            palette: palette_entries,
+            data,
         }
     }
 }

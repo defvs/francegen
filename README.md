@@ -74,8 +74,30 @@ Pass `--config <file>` to override the default surface blocks and biome. The fil
   "top_layer_block": "minecraft:grass_block",
   "top_layer_thickness": 1,
   "bottom_layer_block": "minecraft:stone",
-  "base_biome": "minecraft:plains"
+  "base_biome": "minecraft:plains",
+  "biome_layers": [
+    {
+      "range": { "min": "0m", "max": "300m" },
+      "biome": "minecraft:plains"
+    },
+    {
+      "range": { "min": "300m", "max": "1200m" },
+      "biome": "minecraft:forest"
+    }
+  ],
+  "top_block_layers": [
+    {
+      "range": { "min": "0m", "max": "2500m" },
+      "block": "minecraft:grass_block"
+    },
+    {
+      "range": { "min": "2500m", "max": "4000m" },
+      "block": "minecraft:stone"
+    }
+  ]
 }
 ```
 
-All fields are optional; missing values fall back to the defaults shown above. `top_layer_thickness` must be at least 1 and defines how many blocks (starting at the surface) use `top_layer_block`. Everything below that (down to bedrock) uses `bottom_layer_block`, and each chunk section’s biome palette is filled with `base_biome`.
+All fields are optional; missing values fall back to the defaults shown above. `top_layer_thickness` must be at least 1 and defines how many blocks (starting at the surface) use the selected top block. Everything below that (down to bedrock) uses `bottom_layer_block`.
+
+`biome_layers` and `top_block_layers` let you vary the biome and surface block based on a column’s ground elevation. Each entry requires a `range` with an optional `min` and `max` bound, plus the `biome` or `block` to apply when the surface height falls inside that range. Bounds accept either metres (`"300m"`) or raw Minecraft block heights (`"1200b"`). When multiple layers overlap, the first one in the list wins. Columns that do not match any layer continue to use `base_biome` and `top_layer_block`.
