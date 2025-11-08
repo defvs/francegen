@@ -12,6 +12,14 @@ enum RasterType {
     PixelIsPoint,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct RasterExtent {
+    pub min_x: f64,
+    pub max_x: f64,
+    pub min_z: f64,
+    pub max_z: f64,
+}
+
 pub struct GeoRaster {
     width: usize,
     height: usize,
@@ -102,6 +110,33 @@ impl GeoRaster {
             }
         }
         if value.is_nan() { None } else { Some(value) }
+    }
+
+    pub fn extent(&self) -> RasterExtent {
+        let max_col = self.width.saturating_sub(1);
+        let max_row = self.height.saturating_sub(1);
+        let corners = [
+            self.coord_for(0, 0),
+            self.coord_for(max_col, 0),
+            self.coord_for(0, max_row),
+            self.coord_for(max_col, max_row),
+        ];
+        let mut min_x = f64::INFINITY;
+        let mut max_x = f64::NEG_INFINITY;
+        let mut min_z = f64::INFINITY;
+        let mut max_z = f64::NEG_INFINITY;
+        for coord in &corners {
+            min_x = min_x.min(coord.x);
+            max_x = max_x.max(coord.x);
+            min_z = min_z.min(coord.y);
+            max_z = max_z.max(coord.y);
+        }
+        RasterExtent {
+            min_x,
+            max_x,
+            min_z,
+            max_z,
+        }
     }
 }
 

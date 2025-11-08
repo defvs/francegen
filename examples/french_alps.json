@@ -14,7 +14,7 @@
     { "range": { "max": "5m" },                    "biome": "minecraft:beach" }
   ],
   "top_block_layers": [
-    { "range": { "min": "3300m" },                 "block": "minecraft:ice" },
+    { "range": { "min": "3300m" },                 "block": "minecraft:packed_ice" },
     { "range": { "min": "2500m", "max": "3300m" }, "block": "minecraft:snow_block" },
     { "range": { "min": "1800m", "max": "2500m" }, "block": "minecraft:stone" },
     { "range": { "max": "8m" },                    "block": "minecraft:sand" }

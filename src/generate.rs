@@ -26,8 +26,19 @@ pub fn run_generate(config: &GenerateConfig) -> Result<()> {
     }
     tif_paths.sort();
 
+    if let Some(bounds) = config.bounds {
+        println!(
+            "{} Limiting to model bounds X:[{:.3}..{:.3}] Z:[{:.3}..{:.3}]",
+            "ℹ".blue().bold(),
+            bounds.min_x,
+            bounds.max_x,
+            bounds.min_z,
+            bounds.max_z
+        );
+    }
+
     let ingest_pb = progress_bar(tif_paths.len() as u64, "Ingesting tiles");
-    let mut builder = WorldBuilder::new();
+    let mut builder = WorldBuilder::new(config.bounds);
     for path in &tif_paths {
         let msg = path
             .file_name()
@@ -104,7 +115,7 @@ pub fn run_generate(config: &GenerateConfig) -> Result<()> {
     Ok(())
 }
 
-fn collect_tifs(dir: &Path) -> Result<Vec<PathBuf>> {
+pub fn collect_tifs(dir: &Path) -> Result<Vec<PathBuf>> {
     let mut out = Vec::new();
     for entry in fs::read_dir(dir)
         .with_context(|| format!("Failed to read input directory {}", dir.display()))?

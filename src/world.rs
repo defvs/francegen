@@ -8,6 +8,23 @@ use crate::chunk::ChunkHeights;
 use crate::constants::{BEDROCK_Y, MAX_WORLD_Y, SECTION_SIDE};
 use crate::georaster::GeoRaster;
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ModelBounds {
+    pub min_x: f64,
+    pub max_x: f64,
+    pub min_z: f64,
+    pub max_z: f64,
+}
+
+impl ModelBounds {
+    pub fn contains(&self, coord: &Coord) -> bool {
+        coord.x >= self.min_x
+            && coord.x <= self.max_x
+            && coord.y >= self.min_z
+            && coord.y <= self.max_z
+    }
+}
+
 #[derive(Clone)]
 pub struct WorldStats {
     pub width: usize,
@@ -23,6 +40,7 @@ pub struct WorldStats {
 }
 
 pub struct WorldBuilder {
+    bounds: Option<ModelBounds>,
     origin: Option<Coord>,
     columns: HashMap<(i32, i32), i32>,
     samples: usize,
@@ -35,8 +53,9 @@ pub struct WorldBuilder {
 }
 
 impl WorldBuilder {
-    pub fn new() -> Self {
+    pub fn new(bounds: Option<ModelBounds>) -> Self {
         Self {
+            bounds,
             origin: None,
             columns: HashMap::new(),
             samples: 0,
@@ -119,8 +138,13 @@ impl WorldBuilder {
                 let Some(height_value) = raster.sample(col, row) else {
                     continue;
                 };
-                self.samples += 1;
                 let coord = raster.coord_for(col, row);
+                if let Some(bounds) = self.bounds {
+                    if !bounds.contains(&coord) {
+                        continue;
+                    }
+                }
+                self.samples += 1;
                 let (world_x, world_z) = model_to_world(&origin, &coord);
                 let mc_height = dem_to_minecraft(height_value);
                 self.columns.insert((world_x, world_z), mc_height);

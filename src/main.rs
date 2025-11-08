@@ -1,3 +1,4 @@
+mod bounds;
 mod chunk;
 mod cli;
 mod config;
@@ -10,6 +11,7 @@ mod progress;
 mod world;
 
 use anyhow::{Result, anyhow};
+use bounds::run_bounds;
 use cli::{Command, parse_args};
 use generate::run_generate;
 use locate::run_locate;
@@ -28,5 +30,6 @@ fn main() -> Result<()> {
             run_generate(&config)
         }
         Command::Locate(config) => run_locate(&config),
+        Command::Bounds(config) => run_bounds(&config),
     }
 }

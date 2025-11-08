@@ -12,7 +12,7 @@ Generate Minecraft Java Edition worlds from GeoTIFF heightmaps – one block per
 ### Generate terrain
 
 ```
-francegen [--threads <N>] [--meta-only] <tif-folder> <output-world>
+francegen [--threads <N>] [--meta-only] [--bounds <min_x,min_z,max_x,max_z>] <tif-folder> <output-world>
 ```
 
 | Flag | Description |
@@ -20,6 +20,7 @@ francegen [--threads <N>] [--meta-only] <tif-folder> <output-world>
 | `--threads <N>` | Override Rayon’s worker count. Defaults to the number of logical CPUs. |
 | `--meta-only` | Read the tiles and emit only metadata (no region files). Useful to grab the origin before committing to a full build. |
 | `--config <file>` | Load a JSON terrain configuration file to control block layers and the base biome. |
+| `--bounds <min_x,min_z,max_x,max_z>` | Clip generation to a rectangle in real/model coordinates (metres in the GeoTIFF CRS, matching `francegen locate`). |
 
 During ingestion the tool prints world-size estimates, DEM min/max, and the origin in model space. When generation finishes, it writes the usual `region/` directory plus a `francegen_meta.json` file inside `<output-world>` containing the GeoTIFF origin and bounds.
 
@@ -30,6 +31,14 @@ francegen locate <world-dir> <real-x> <real-z> [<real-height>]
 ```
 
 Reads `francegen_meta.json`, subtracts the recorded origin, and prints the Minecraft block/chunk coordinates. Provide a third number (height in metres) to also get the Minecraft Y value (`DEM + (-2048)`; clamped to [-2048, 2031]).
+
+### Inspect GeoTIFF bounds
+
+```
+francegen bounds <tif-folder>
+```
+
+Scans the folder for `.tif`/`.tiff` files, prints their combined real-world bounding rectangle, and echoes a ready-to-copy `--bounds` flag.
 
 ## Metadata format
 
@@ -58,6 +67,10 @@ francegen --threads 8 data/tiffs ./worlds/alps
 
 # Only capture metadata to inspect alignment
 francegen --meta-only data/tiffs ./worlds/alps-metadata
+
+# Inspect tile bounds, then build a clipped world inside that rectangle
+francegen bounds data/tiffs
+francegen --bounds 873000.0,6427000.0,874000.0,6428000.0 data/tiffs ./worlds/alps-clipped
 
 # Convert a surveyed coordinate into Minecraft space
 francegen locate ./worlds/alps 873210.4 6428123.6 1523.0
