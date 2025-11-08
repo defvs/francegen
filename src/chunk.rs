@@ -319,10 +319,8 @@ fn block_for(
     }
     let depth = surface - world_y;
     if depth < top_thickness as i32 {
-        if depth == 0 {
-            if let Some(block) = column.cliff_block_override() {
-                return BlockId::Named(block);
-            }
+        if let Some(block) = column.cliff_block_override() {
+            return BlockId::Named(block);
         }
         BlockId::Named(Arc::clone(&column.top_block))
     } else {
