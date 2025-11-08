@@ -47,7 +47,7 @@ Reads `francegen_meta.json`, subtracts the recorded origin, and prints the Minec
 }
 ```
 
-`origin_model_*` is the real-world coordinate that became Minecraft `(0,0)`. X increases east, Z increases south (north is `-Z`, matching Minecraft).
+`origin_model_*` is the real-world coordinate that became Minecraft `(0,0)`. X increases east, while **Z increases south (north is `-Z`)** just like standard Minecraft coordinates. The generator flips the GeoTIFF Y axis internally so geographic north (increasing model-space Y) aligns with negative Minecraft Z.
 
 ## Examples
 

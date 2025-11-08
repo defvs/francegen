@@ -116,7 +116,7 @@ fn run_generate(config: &GenerateConfig) -> Result<()> {
 fn run_locate(config: &LocateConfig) -> Result<()> {
     let metadata = load_metadata(&config.world)?;
     let mc_x = (config.real_x - metadata.origin_model_x).round() as i32;
-    let mc_z = (config.real_z - metadata.origin_model_z).round() as i32;
+    let mc_z = (metadata.origin_model_z - config.real_z).round() as i32;
     let chunk_x = mc_x.div_euclid(SECTION_SIDE as i32);
     let chunk_z = mc_z.div_euclid(SECTION_SIDE as i32);
     let block_x = mc_x.rem_euclid(SECTION_SIDE as i32);
@@ -594,7 +594,7 @@ impl WorldBuilder {
 
 fn model_to_world(origin: &Coord, coord: &Coord) -> (i32, i32) {
     let dx = coord.x - origin.x;
-    let dz = coord.y - origin.y;
+    let dz = origin.y - coord.y; // flip so geographic north (increasing model Y) maps to Minecraft -Z
     (dx.round() as i32, dz.round() as i32)
 }
 
