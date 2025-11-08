@@ -494,7 +494,7 @@ struct PaletteBlock {
 
 #[derive(Serialize)]
 struct BiomesNbt {
-    palette: Vec<BiomeEntry>,
+    palette: Vec<String>,
     #[serde(rename = "data", skip_serializing_if = "Option::is_none")]
     data: Option<Vec<i64>>,
 }
@@ -504,9 +504,7 @@ impl BiomesNbt {
         let palette_entries = palette
             .entries
             .iter()
-            .map(|name| BiomeEntry {
-                name: name.to_string(),
-            })
+            .map(|name| name.to_string())
             .collect::<Vec<_>>();
         let data = pack_palette_indices(indices, palette_entries.len(), 1);
         Self {
@@ -514,12 +512,6 @@ impl BiomesNbt {
             data,
         }
     }
-}
-
-#[derive(Serialize)]
-struct BiomeEntry {
-    #[serde(rename = "Name")]
-    name: String,
 }
 
 #[derive(Serialize)]
