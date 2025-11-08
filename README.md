@@ -101,3 +101,5 @@ Pass `--config <file>` to override the default surface blocks and biome. The fil
 All fields are optional; missing values fall back to the defaults shown above. `top_layer_thickness` must be at least 1 and defines how many blocks (starting at the surface) use the selected top block. Everything below that (down to bedrock) uses `bottom_layer_block`.
 
 `biome_layers` and `top_block_layers` let you vary the biome and surface block based on a column’s ground elevation. Each entry requires a `range` with an optional `min` and `max` bound, plus the `biome` or `block` to apply when the surface height falls inside that range. Bounds accept either metres (`"300m"`) or raw Minecraft block heights (`"1200b"`). When multiple layers overlap, the first one in the list wins. Columns that do not match any layer continue to use `base_biome` and `top_layer_block`.
+
+See [`examples/french_alps.json`](examples/french_alps.json) for a full configuration inspired by alpine terrain.

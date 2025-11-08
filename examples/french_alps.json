@@ -1,0 +1,22 @@
+{
+  "top_layer_block": "minecraft:grass_block",
+  "top_layer_thickness": 2,
+  "bottom_layer_block": "minecraft:stone",
+  "base_biome": "minecraft:plains",
+  "biome_layers": [
+    { "range": { "min": "3300m" },                 "biome": "minecraft:frozen_peaks" },
+    { "range": { "min": "2500m", "max": "3300m" }, "biome": "minecraft:snowy_slopes" },
+    { "range": { "min": "1800m", "max": "2500m" }, "biome": "minecraft:stony_peaks" },
+    { "range": { "min": "1200m", "max": "1800m" }, "biome": "minecraft:windswept_hills" },
+    { "range": { "min": "800m",  "max": "1200m" }, "biome": "minecraft:taiga" },
+    { "range": { "min": "200m",  "max": "800m" },  "biome": "minecraft:forest" },
+    { "range": { "min": "50m",   "max": "200m" },  "biome": "minecraft:birch_forest" },
+    { "range": { "max": "5m" },                    "biome": "minecraft:beach" }
+  ],
+  "top_block_layers": [
+    { "range": { "min": "3300m" },                 "block": "minecraft:ice" },
+    { "range": { "min": "2500m", "max": "3300m" }, "block": "minecraft:snow_block" },
+    { "range": { "min": "1800m", "max": "2500m" }, "block": "minecraft:stone" },
+    { "range": { "max": "8m" },                    "block": "minecraft:sand" }
+  ]
+}
