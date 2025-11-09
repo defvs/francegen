@@ -17,6 +17,7 @@ pub struct TerrainConfig {
     top_block_layers: Vec<TopBlockLayer>,
     cliffs: CliffConfig,
     osm: Option<OsmConfig>,
+    chunk_status: ChunkStatus,
 }
 
 impl TerrainConfig {
@@ -92,6 +93,10 @@ impl TerrainConfig {
         self.osm.as_ref()
     }
 
+    pub fn chunk_status(&self) -> ChunkStatus {
+        self.chunk_status
+    }
+
     fn from_file(file: TerrainConfigFile) -> Result<Self> {
         if file.top_layer_thickness == 0 {
             bail!("top_layer_thickness must be greater than 0");
@@ -112,6 +117,7 @@ impl TerrainConfig {
             Some(config) => Some(OsmConfig::from_file(config)?),
             None => None,
         };
+        let chunk_status = ChunkStatus::parse(&file.chunk_status)?;
 
         Ok(Self {
             top_layer_block: Arc::<str>::from(file.top_layer_block),
@@ -122,6 +128,7 @@ impl TerrainConfig {
             top_block_layers,
             cliffs,
             osm,
+            chunk_status,
         })
     }
 }
@@ -137,7 +144,40 @@ impl Default for TerrainConfig {
             top_block_layers: Vec::new(),
             cliffs: CliffConfig::default(),
             osm: None,
+            chunk_status: ChunkStatus::Full,
         }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ChunkStatus {
+    Full,
+    Features,
+}
+
+impl ChunkStatus {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            ChunkStatus::Full => "minecraft:full",
+            ChunkStatus::Features => "minecraft:features",
+        }
+    }
+
+    fn parse(value: &str) -> Result<Self> {
+        match value {
+            "minecraft:full" => Ok(ChunkStatus::Full),
+            "minecraft:features" => Ok(ChunkStatus::Features),
+            other => bail!(
+                "chunk_status must be either 'minecraft:full' or 'minecraft:features', found '{}'",
+                other
+            ),
+        }
+    }
+}
+
+impl Default for ChunkStatus {
+    fn default() -> Self {
+        ChunkStatus::Full
     }
 }
 
@@ -159,6 +199,8 @@ struct TerrainConfigFile {
     cliff_generation: CliffGenerationFile,
     #[serde(default)]
     osm: Option<OsmConfigFile>,
+    #[serde(default = "default_chunk_status")]
+    chunk_status: String,
 }
 
 fn default_bottom_layer() -> String {
@@ -175,6 +217,10 @@ fn default_top_thickness() -> u32 {
 
 fn default_base_biome() -> String {
     "minecraft:plains".to_string()
+}
+
+fn default_chunk_status() -> String {
+    "minecraft:full".to_string()
 }
 
 fn default_smoothing_radius() -> u32 {

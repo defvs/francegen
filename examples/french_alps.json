@@ -3,6 +3,7 @@
   "top_layer_thickness": 6,
   "bottom_layer_block": "minecraft:stone",
   "base_biome": "minecraft:plains",
+  "chunk_status": "minecraft:features",
   "cliff_generation": {
     "enabled": true,
     "angle_threshold_degrees": 55.0,

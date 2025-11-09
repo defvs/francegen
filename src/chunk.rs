@@ -272,7 +272,7 @@ fn build_chunk_bytes(
         x_pos: chunk_x,
         z_pos: chunk_z,
         y_pos: (BEDROCK_Y.div_euclid(SECTION_SIDE as i32)) as i32,
-        status: "full".to_string(),
+        status: terrain.chunk_status().as_str().to_string(),
         sections,
         heightmaps,
         structures: StructuresNbt::default(),
