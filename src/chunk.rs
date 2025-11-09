@@ -265,6 +265,12 @@ fn build_chunk_bytes(
 
     let heightmaps = build_heightmaps(columns);
 
+    let status = if terrain.generate_features() {
+        "minecraft:liquid_carvers"
+    } else {
+        "minecraft:full"
+    };
+
     let chunk = ChunkNbt {
         data_version: DATA_VERSION,
         last_update: 0,
@@ -272,7 +278,7 @@ fn build_chunk_bytes(
         x_pos: chunk_x,
         z_pos: chunk_z,
         y_pos: (BEDROCK_Y.div_euclid(SECTION_SIDE as i32)) as i32,
-        status: terrain.chunk_status().as_str().to_string(),
+        status: status.to_string(),
         sections,
         heightmaps,
         structures: StructuresNbt::default(),

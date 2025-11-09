@@ -88,7 +88,7 @@ Pass `--config <file>` to override the default surface blocks and biome. The fil
   "top_layer_thickness": 1,
   "bottom_layer_block": "minecraft:stone",
   "base_biome": "minecraft:plains",
-  "chunk_status": "minecraft:features",
+  "generate_features": true,
   "cliff_generation": {
     "enabled": true,
     "angle_threshold_degrees": 60.0,
@@ -124,7 +124,7 @@ Pass `--config <file>` to override the default surface blocks and biome. The fil
 
 All fields are optional; missing values fall back to the defaults shown above. `top_layer_thickness` must be at least 1 and defines how many blocks (starting at the surface) use the selected top block. Everything below that (down to bedrock) uses `bottom_layer_block`.
 
-`chunk_status` controls the `Status` tag written into every chunk. Leave it at `minecraft:full` (the default) for fully generated chunks, or switch to `minecraft:features` when you want the vanilla game to keep running the feature population step (trees, ores, etc.) after loading your world.
+`generate_features` toggles whether vanilla Minecraft should keep running the late-worldgen feature pass (trees, ores, etc.) when it loads your chunks. Leave it `false` (the default) to save chunks with `minecraft:full` status, or set it to `true` to emit proto-chunks marked as `minecraft:liquid_carvers` so the game populates them later.
 
 `biome_layers` and `top_block_layers` let you vary the biome and surface block based on a column’s ground elevation. Each entry requires a `range` with an optional `min` and `max` bound, plus the `biome` or `block` to apply when the surface height falls inside that range. Bounds accept either metres (`"300m"`) or raw Minecraft block heights (`"1200b"`). When multiple layers overlap, the first one in the list wins. Columns that do not match any layer continue to use `base_biome` and `top_layer_block`.
 

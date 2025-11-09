@@ -1,13 +1,13 @@
 use std::collections::HashMap;
-use std::f64::consts::{FRAC_PI_2, PI};
 use std::sync::Arc;
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, anyhow};
 use geo::algorithm::bounding_rect::BoundingRect;
 use geo::prelude::Contains;
 use geo::{LineString, Point, Polygon};
 use geo_types::Coord;
 use owo_colors::OwoColorize;
+use proj::Proj;
 use reqwest::blocking::Client;
 use serde::Deserialize;
 
@@ -28,9 +28,9 @@ pub fn apply_osm_overlays(
         return Ok(());
     }
 
-    let lambert = Lambert93::new();
+    let transform = CoordinateTransformer::new()?;
     let bbox = WorldBoundingBox::from_stats(stats, origin, osm.bbox_margin_m());
-    let latlon_bounds = bbox.to_latlon(&lambert);
+    let latlon_bounds = bbox.to_latlon(&transform)?;
     let bbox_param = latlon_bounds.to_overpass_bbox();
     println!(
         "{} OSM bbox (Lambert93): X:[{:.3}..{:.3}] Z:[{:.3}..{:.3}]",
@@ -80,7 +80,7 @@ pub fn apply_osm_overlays(
         }
         let parsed: OverpassResponse = serde_json::from_str(&body)
             .with_context(|| format!("Failed to parse Overpass JSON for '{}'", layer.name()))?;
-        let painted = rasterize_layer(layer, &parsed.elements, &lambert, origin, chunks);
+        let painted = rasterize_layer(layer, &parsed.elements, &transform, origin, chunks)?;
         println!(
             "  {} Applied {} overlay column{}",
             "✔".green().bold(),
@@ -111,10 +111,10 @@ fn build_query(layer: &OsmLayer, bbox_param: &str) -> String {
 fn rasterize_layer(
     layer: &OsmLayer,
     elements: &[OverpassElement],
-    lambert: &Lambert93,
+    transform: &CoordinateTransformer,
     origin: Coord,
     chunks: &mut HashMap<(i32, i32), ChunkHeights>,
-) -> usize {
+) -> Result<usize> {
     let overlay = ColumnOverlay::new(
         layer.priority(),
         layer.style().biome().map(|value| Arc::clone(value)),
@@ -134,7 +134,7 @@ fn rasterize_layer(
         };
         let mut path: Vec<(i32, i32)> = Vec::with_capacity(geometry.len());
         for point in geometry {
-            let (x, y) = lambert.latlon_to_lambert(point.lat, point.lon);
+            let (x, y) = transform.latlon_to_lambert(point.lat, point.lon)?;
             let world_x = (x - origin.x).round() as i32;
             let world_z = (origin.y - y).round() as i32;
             path.push((world_x, world_z));
@@ -150,7 +150,7 @@ fn rasterize_layer(
         }
     }
 
-    painted
+    Ok(painted)
 }
 
 fn rasterize_line(
@@ -253,87 +253,37 @@ fn apply_overlay_column(
     false
 }
 
-struct Lambert93 {
-    a: f64,
-    e: f64,
-    n: f64,
-    c: f64,
-    rho0: f64,
-    lon0: f64,
-    false_easting: f64,
-    false_northing: f64,
+struct CoordinateTransformer {
+    to_latlon: Proj,
+    to_lambert: Proj,
 }
 
-impl Lambert93 {
-    fn new() -> Self {
-        const LAT1: f64 = 44.0_f64.to_radians();
-        const LAT2: f64 = 49.0_f64.to_radians();
-        const LAT0: f64 = 46.5_f64.to_radians();
-        const A: f64 = 6_378_137.0; // GRS80 semi-major axis
-        const F_INV: f64 = 298.257_222_101; // inverse flattening
-        let f = 1.0 / F_INV;
-        let e2 = 2.0 * f - f * f;
-        let e = e2.sqrt();
-        let m1 = Self::m(LAT1, e);
-        let m2 = Self::m(LAT2, e);
-        let t1 = Self::t(LAT1, e);
-        let t2 = Self::t(LAT2, e);
-        let t0 = Self::t(LAT0, e);
-        let n = (m1.ln() - m2.ln()) / (t1.ln() - t2.ln());
-        let c = m1 / (n * t1.powf(n));
-        let rho0 = A * c * t0.powf(n);
-        Self {
-            a: A,
-            e,
-            n,
-            c,
-            rho0,
-            lon0: 3.0_f64.to_radians(),
-            false_easting: 700_000.0,
-            false_northing: 6_600_000.0,
-        }
+impl CoordinateTransformer {
+    fn new() -> Result<Self> {
+        let to_latlon = Proj::new_known_crs("EPSG:2154", "EPSG:4326", None)
+            .context("Failed to build EPSG:2154 → EPSG:4326 transform")?;
+        let to_lambert = Proj::new_known_crs("EPSG:4326", "EPSG:2154", None)
+            .context("Failed to build EPSG:4326 → EPSG:2154 transform")?;
+        Ok(Self {
+            to_latlon,
+            to_lambert,
+        })
     }
 
-    fn latlon_to_lambert(&self, lat_deg: f64, lon_deg: f64) -> (f64, f64) {
-        let lat = lat_deg.to_radians();
-        let lon = lon_deg.to_radians();
-        let t = Self::t(lat, self.e);
-        let rho = self.a * self.c * t.powf(self.n);
-        let theta = self.n * (lon - self.lon0);
-        let x = self.false_easting + rho * theta.sin();
-        let y = self.false_northing + self.rho0 - rho * theta.cos();
-        (x, y)
+    fn lambert_to_latlon(&self, x: f64, y: f64) -> Result<(f64, f64)> {
+        let coord = self
+            .to_latlon
+            .convert((x, y))
+            .map_err(|err| anyhow!("Lambert93 → WGS84 transform failed: {err}"))?;
+        Ok((coord.1, coord.0))
     }
 
-    fn lambert_to_latlon(&self, x: f64, y: f64) -> (f64, f64) {
-        let dx = x - self.false_easting;
-        let dy = self.rho0 - (y - self.false_northing);
-        let rho = (dx * dx + dy * dy).sqrt();
-        let t = (rho / (self.a * self.c)).powf(1.0 / self.n);
-        let mut phi = FRAC_PI_2 - 2.0 * t.atan();
-        for _ in 0..6 {
-            let sin_phi = phi.sin();
-            let term = ((1.0 + self.e * sin_phi) / (1.0 - self.e * sin_phi)).powf(self.e / 2.0);
-            let next = FRAC_PI_2 - 2.0 * (t * term).atan();
-            if (phi - next).abs() < 1e-12 {
-                phi = next;
-                break;
-            }
-            phi = next;
-        }
-        let theta = dx.atan2(dy);
-        let lon = self.lon0 + theta / self.n;
-        (phi.to_degrees(), lon.to_degrees())
-    }
-
-    fn m(lat: f64, e: f64) -> f64 {
-        lat.cos() / (1.0 - e * e * lat.sin().powi(2)).sqrt()
-    }
-
-    fn t(lat: f64, e: f64) -> f64 {
-        let sin_lat = lat.sin();
-        let numerator = (1.0 - e * sin_lat) / (1.0 + e * sin_lat);
-        ((PI / 4.0 - lat / 2.0).tan()) / numerator.powf(e / 2.0)
+    fn latlon_to_lambert(&self, lat: f64, lon: f64) -> Result<(f64, f64)> {
+        let coord = self
+            .to_lambert
+            .convert((lon, lat))
+            .map_err(|err| anyhow!("WGS84 → Lambert93 transform failed: {err}"))?;
+        Ok((coord.0, coord.1))
     }
 }
 
@@ -359,7 +309,7 @@ impl WorldBoundingBox {
         }
     }
 
-    fn to_latlon(&self, transform: &Lambert93) -> LatLonBounds {
+    fn to_latlon(&self, transform: &CoordinateTransformer) -> Result<LatLonBounds> {
         let corners = [
             (self.min_x, self.min_z),
             (self.min_x, self.max_z),
@@ -371,18 +321,18 @@ impl WorldBoundingBox {
         let mut west = f64::INFINITY;
         let mut east = f64::NEG_INFINITY;
         for (x, z) in corners {
-            let (lat, lon) = transform.lambert_to_latlon(x, z);
+            let (lat, lon) = transform.lambert_to_latlon(x, z)?;
             south = south.min(lat);
             north = north.max(lat);
             west = west.min(lon);
             east = east.max(lon);
         }
-        LatLonBounds {
+        Ok(LatLonBounds {
             south,
             north,
             west,
             east,
-        }
+        })
     }
 }
 

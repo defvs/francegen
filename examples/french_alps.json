@@ -3,7 +3,7 @@
   "top_layer_thickness": 6,
   "bottom_layer_block": "minecraft:stone",
   "base_biome": "minecraft:plains",
-  "chunk_status": "minecraft:features",
+  "generate_features": true,
   "cliff_generation": {
     "enabled": true,
     "angle_threshold_degrees": 55.0,
@@ -32,22 +32,22 @@
     "bbox_margin_m": 500.0,
     "layers": [
       {
-        "name": "paved_roads",
+        "name": "trails_and_tracks",
         "geometry": "line",
-        "width_m": 6.0,
-        "query": "(way[\"highway\"~\"^(motorway|trunk|primary|secondary|tertiary|residential)$\"]({{bbox}}););",
+        "width_m": 1.0,
+        "query": "(way[\"highway\"~\"^(track|path)$\"]({{bbox}}););",
         "style": {
-          "surface_block": "minecraft:stone_bricks",
+          "surface_block": "minecraft:coarse_dirt",
           "top_thickness": 1
         }
       },
       {
-        "name": "trails_and_tracks",
+        "name": "paved_roads",
         "geometry": "line",
-        "width_m": 3.0,
-        "query": "(way[\"highway\"~\"^(track|path)$\"]({{bbox}}););",
+        "width_m": 5.0,
+        "query": "(way[\"highway\"~\"^(motorway|trunk|primary|secondary|tertiary|residential)$\"]({{bbox}}););",
         "style": {
-          "surface_block": "minecraft:coarse_dirt",
+          "surface_block": "minecraft:black_concrete",
           "top_thickness": 1
         }
       },
@@ -95,7 +95,7 @@
         "geometry": "polygon",
         "query": "(way[\"building\"]({{bbox}});relation[\"building\"]({{bbox}}););",
         "style": {
-          "surface_block": "minecraft:smooth_stone",
+          "surface_block": "minecraft:black_concrete",
           "top_thickness": 4,
           "subsurface_block": "minecraft:stone"
         }
