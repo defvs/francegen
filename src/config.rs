@@ -16,6 +16,7 @@ pub struct TerrainConfig {
     biome_layers: Vec<BiomeLayer>,
     top_block_layers: Vec<TopBlockLayer>,
     cliffs: CliffConfig,
+    osm: Option<OsmConfig>,
 }
 
 impl TerrainConfig {
@@ -87,6 +88,10 @@ impl TerrainConfig {
         }
     }
 
+    pub fn osm(&self) -> Option<&OsmConfig> {
+        self.osm.as_ref()
+    }
+
     fn from_file(file: TerrainConfigFile) -> Result<Self> {
         if file.top_layer_thickness == 0 {
             bail!("top_layer_thickness must be greater than 0");
@@ -103,6 +108,10 @@ impl TerrainConfig {
             .into_iter()
             .map(parse_top_block_layer)
             .collect::<Result<Vec<_>>>()?;
+        let osm = match file.osm {
+            Some(config) => Some(OsmConfig::from_file(config)?),
+            None => None,
+        };
 
         Ok(Self {
             top_layer_block: Arc::<str>::from(file.top_layer_block),
@@ -112,6 +121,7 @@ impl TerrainConfig {
             biome_layers,
             top_block_layers,
             cliffs,
+            osm,
         })
     }
 }
@@ -126,6 +136,7 @@ impl Default for TerrainConfig {
             biome_layers: Vec::new(),
             top_block_layers: Vec::new(),
             cliffs: CliffConfig::default(),
+            osm: None,
         }
     }
 }
@@ -146,6 +157,8 @@ struct TerrainConfigFile {
     top_block_layers: Vec<TopBlockLayerFile>,
     #[serde(default)]
     cliff_generation: CliffGenerationFile,
+    #[serde(default)]
+    osm: Option<OsmConfigFile>,
 }
 
 fn default_bottom_layer() -> String {
@@ -469,4 +482,244 @@ fn parse_height(raw: &str) -> Result<i32> {
         _ => unreachable!(),
     };
     Ok(value)
+}
+
+fn default_osm_enabled() -> bool {
+    true
+}
+
+fn default_overpass_url() -> String {
+    "https://overpass-api.de/api/interpreter".to_string()
+}
+
+fn default_bbox_margin_m() -> f64 {
+    300.0
+}
+
+fn default_line_width_m() -> f64 {
+    3.0
+}
+
+#[derive(Debug, Deserialize)]
+struct OsmConfigFile {
+    #[serde(default = "default_osm_enabled")]
+    enabled: bool,
+    #[serde(default = "default_overpass_url")]
+    overpass_url: String,
+    #[serde(default = "default_bbox_margin_m")]
+    bbox_margin_m: f64,
+    #[serde(default)]
+    layers: Vec<OsmLayerFile>,
+}
+
+#[derive(Debug, Deserialize)]
+struct OsmLayerFile {
+    name: String,
+    #[serde(default)]
+    geometry: OsmGeometryFile,
+    query: String,
+    #[serde(default = "default_line_width_m")]
+    width_m: f64,
+    #[serde(default)]
+    priority: Option<u32>,
+    #[serde(default)]
+    style: OsmLayerStyleFile,
+}
+
+#[derive(Debug, Deserialize, Clone, Copy)]
+enum OsmGeometryFile {
+    #[serde(rename = "line")]
+    Line,
+    #[serde(rename = "polygon")]
+    Polygon,
+}
+
+impl Default for OsmGeometryFile {
+    fn default() -> Self {
+        Self::Polygon
+    }
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct OsmLayerStyleFile {
+    biome: Option<String>,
+    surface_block: Option<String>,
+    subsurface_block: Option<String>,
+    top_thickness: Option<u32>,
+}
+
+#[derive(Debug, Clone)]
+pub struct OsmConfig {
+    enabled: bool,
+    overpass_url: Arc<str>,
+    bbox_margin_m: f64,
+    layers: Vec<OsmLayer>,
+}
+
+impl OsmConfig {
+    fn from_file(file: OsmConfigFile) -> Result<Self> {
+        if file.layers.is_empty() && file.enabled {
+            bail!("osm.layers must contain at least one entry when osm.enabled is true");
+        }
+        let mut layers = Vec::with_capacity(file.layers.len());
+        for (idx, layer) in file.layers.into_iter().enumerate() {
+            layers.push(OsmLayer::from_file(layer, idx as u32)?);
+        }
+        Ok(Self {
+            enabled: file.enabled,
+            overpass_url: Arc::<str>::from(file.overpass_url),
+            bbox_margin_m: file.bbox_margin_m.max(0.0),
+            layers,
+        })
+    }
+
+    pub fn enabled(&self) -> bool {
+        self.enabled
+    }
+
+    pub fn overpass_url(&self) -> &str {
+        &self.overpass_url
+    }
+
+    pub fn bbox_margin_m(&self) -> f64 {
+        self.bbox_margin_m
+    }
+
+    pub fn layers(&self) -> &[OsmLayer] {
+        &self.layers
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct OsmLayer {
+    name: Arc<str>,
+    geometry: OsmGeometry,
+    query: Arc<str>,
+    width_m: f64,
+    priority: u32,
+    style: OsmLayerStyle,
+}
+
+impl OsmLayer {
+    fn from_file(file: OsmLayerFile, implicit_priority: u32) -> Result<Self> {
+        if file.name.trim().is_empty() {
+            bail!("osm layer name must not be empty");
+        }
+        if file.query.trim().is_empty() {
+            bail!("osm layer query must not be empty");
+        }
+        let geometry = match file.geometry {
+            OsmGeometryFile::Line => OsmGeometry::Line,
+            OsmGeometryFile::Polygon => OsmGeometry::Polygon,
+        };
+        if matches!(geometry, OsmGeometry::Line) && file.width_m <= 0.0 {
+            bail!("line layers must define width_m > 0");
+        }
+        let style = OsmLayerStyle::from_file(file.style)?;
+        Ok(Self {
+            name: Arc::<str>::from(file.name),
+            geometry,
+            query: Arc::<str>::from(file.query),
+            width_m: file.width_m.max(0.5),
+            priority: file.priority.unwrap_or(implicit_priority),
+            style,
+        })
+    }
+
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    pub fn geometry(&self) -> OsmGeometry {
+        self.geometry
+    }
+
+    pub fn query(&self) -> &str {
+        &self.query
+    }
+
+    pub fn width_m(&self) -> f64 {
+        self.width_m
+    }
+
+    pub fn priority(&self) -> u32 {
+        self.priority
+    }
+
+    pub fn style(&self) -> &OsmLayerStyle {
+        &self.style
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum OsmGeometry {
+    Line,
+    Polygon,
+}
+
+#[derive(Debug, Clone)]
+pub struct OsmLayerStyle {
+    biome: Option<Arc<str>>,
+    surface_block: Option<Arc<str>>,
+    subsurface_block: Option<Arc<str>>,
+    top_thickness: Option<u32>,
+}
+
+impl OsmLayerStyle {
+    fn from_file(file: OsmLayerStyleFile) -> Result<Self> {
+        if file.biome.is_none()
+            && file.surface_block.is_none()
+            && file.subsurface_block.is_none()
+            && file.top_thickness.is_none()
+        {
+            bail!(
+                "osm layer style must set at least one of biome, surface_block, subsurface_block, or top_thickness"
+            );
+        }
+        if let Some(thickness) = file.top_thickness {
+            if thickness == 0 {
+                bail!("osm.layers[].style.top_thickness must be greater than 0 when provided");
+            }
+        }
+        Ok(Self {
+            biome: normalize_osm_name(file.biome, "osm.layers[].style.biome")?,
+            surface_block: normalize_osm_name(
+                file.surface_block,
+                "osm.layers[].style.surface_block",
+            )?,
+            subsurface_block: normalize_osm_name(
+                file.subsurface_block,
+                "osm.layers[].style.subsurface_block",
+            )?,
+            top_thickness: file.top_thickness,
+        })
+    }
+
+    pub fn biome(&self) -> Option<&Arc<str>> {
+        self.biome.as_ref()
+    }
+
+    pub fn surface_block(&self) -> Option<&Arc<str>> {
+        self.surface_block.as_ref()
+    }
+
+    pub fn subsurface_block(&self) -> Option<&Arc<str>> {
+        self.subsurface_block.as_ref()
+    }
+
+    pub fn top_thickness(&self) -> Option<u32> {
+        self.top_thickness
+    }
+}
+
+fn normalize_osm_name(value: Option<String>, field: &str) -> Result<Option<Arc<str>>> {
+    match value {
+        Some(name) => {
+            if name.trim().is_empty() {
+                bail!("{field} must not be empty when provided");
+            }
+            Ok(Some(Arc::<str>::from(name)))
+        }
+        None => Ok(None),
+    }
 }

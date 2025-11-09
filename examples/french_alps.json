@@ -25,5 +25,80 @@
     { "range": { "min": "2500m", "max": "3300m" }, "block": "minecraft:snow_block" },
     { "range": { "min": "1800m", "max": "2500m" }, "block": "minecraft:stone" },
     { "range": { "max": "8m" },                    "block": "minecraft:sand" }
-  ]
+  ],
+  "osm": {
+    "enabled": true,
+    "bbox_margin_m": 500.0,
+    "layers": [
+      {
+        "name": "paved_roads",
+        "geometry": "line",
+        "width_m": 6.0,
+        "query": "(way[\"highway\"~\"^(motorway|trunk|primary|secondary|tertiary|residential)$\"]({{bbox}}););",
+        "style": {
+          "surface_block": "minecraft:stone_bricks",
+          "top_thickness": 1
+        }
+      },
+      {
+        "name": "trails_and_tracks",
+        "geometry": "line",
+        "width_m": 3.0,
+        "query": "(way[\"highway\"~\"^(track|path)$\"]({{bbox}}););",
+        "style": {
+          "surface_block": "minecraft:coarse_dirt",
+          "top_thickness": 1
+        }
+      },
+      {
+        "name": "waterways",
+        "geometry": "line",
+        "width_m": 4.0,
+        "query": "(way[\"waterway\"~\"^(river|stream)$\"]({{bbox}}););",
+        "style": {
+          "surface_block": "minecraft:water",
+          "top_thickness": 4,
+          "subsurface_block": "minecraft:dirt"
+        }
+      },
+      {
+        "name": "water_polygons",
+        "geometry": "polygon",
+        "query": "(way[\"natural\"=\"water\"]({{bbox}});relation[\"natural\"=\"water\"]({{bbox}}););",
+        "style": {
+          "surface_block": "minecraft:water",
+          "top_thickness": 5,
+          "subsurface_block": "minecraft:clay"
+        }
+      },
+      {
+        "name": "dense_forest",
+        "geometry": "polygon",
+        "query": "(way[\"natural\"=\"wood\"]({{bbox}});way[\"landuse\"=\"forest\"]({{bbox}});relation[\"landuse\"=\"forest\"]({{bbox}}););",
+        "style": {
+          "biome": "minecraft:forest",
+          "surface_block": "minecraft:grass_block"
+        }
+      },
+      {
+        "name": "subalpine_meadows",
+        "geometry": "polygon",
+        "query": "(way[\"natural\"~\"^(grassland|heath)$\"]({{bbox}});way[\"landuse\"~\"^(meadow|farmland)$\"]({{bbox}}););",
+        "style": {
+          "biome": "minecraft:meadow",
+          "surface_block": "minecraft:grass_block"
+        }
+      },
+      {
+        "name": "buildings",
+        "geometry": "polygon",
+        "query": "(way[\"building\"]({{bbox}});relation[\"building\"]({{bbox}}););",
+        "style": {
+          "surface_block": "minecraft:smooth_stone",
+          "top_thickness": 4,
+          "subsurface_block": "minecraft:stone"
+        }
+      }
+    ]
+  }
 }

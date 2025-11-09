@@ -20,6 +20,53 @@ const BIOME_ENTRIES_PER_SECTION: usize = BIOME_SIDE * BIOME_SIDE * BIOME_SIDE;
 const _: [(); SECTION_SIDE % 4] = [];
 
 #[derive(Clone)]
+pub struct ColumnOverlay {
+    priority: u32,
+    biome: Option<Arc<str>>,
+    surface_block: Option<Arc<str>>,
+    subsurface_block: Option<Arc<str>>,
+    top_thickness: Option<u32>,
+}
+
+impl ColumnOverlay {
+    pub fn new(
+        priority: u32,
+        biome: Option<Arc<str>>,
+        surface_block: Option<Arc<str>>,
+        subsurface_block: Option<Arc<str>>,
+        top_thickness: Option<u32>,
+    ) -> Self {
+        Self {
+            priority,
+            biome,
+            surface_block,
+            subsurface_block,
+            top_thickness,
+        }
+    }
+
+    pub fn priority(&self) -> u32 {
+        self.priority
+    }
+
+    pub fn biome_override(&self) -> Option<Arc<str>> {
+        self.biome.as_ref().map(Arc::clone)
+    }
+
+    pub fn surface_block_override(&self) -> Option<Arc<str>> {
+        self.surface_block.as_ref().map(Arc::clone)
+    }
+
+    pub fn subsurface_block_override(&self) -> Option<Arc<str>> {
+        self.subsurface_block.as_ref().map(Arc::clone)
+    }
+
+    pub fn top_thickness_override(&self) -> Option<u32> {
+        self.top_thickness
+    }
+}
+
+#[derive(Clone)]
 pub struct SlopeProfile {
     stats: Vec<SlopeStats>,
 }
@@ -59,6 +106,7 @@ pub struct SlopeStats {
 pub struct ChunkHeights {
     heights: [Option<i32>; SECTION_SIDE * SECTION_SIDE],
     slopes: Vec<SlopeProfile>,
+    overlays: Vec<Option<ColumnOverlay>>,
 }
 
 impl ChunkHeights {
@@ -70,6 +118,7 @@ impl ChunkHeights {
         Self {
             heights: [None; SECTION_SIDE * SECTION_SIDE],
             slopes,
+            overlays: vec![None; SECTION_SIDE * SECTION_SIDE],
         }
     }
 
@@ -90,6 +139,21 @@ impl ChunkHeights {
 
     pub fn max_height(&self) -> Option<i32> {
         self.heights.iter().copied().flatten().max()
+    }
+
+    pub fn apply_overlay(&mut self, x: usize, z: usize, overlay: ColumnOverlay) {
+        let idx = z * SECTION_SIDE + x;
+        let replace = match &self.overlays[idx] {
+            Some(current) if current.priority() > overlay.priority() => false,
+            _ => true,
+        };
+        if replace {
+            self.overlays[idx] = Some(overlay);
+        }
+    }
+
+    pub fn overlay(&self, x: usize, z: usize) -> Option<&ColumnOverlay> {
+        self.overlays[z * SECTION_SIDE + x].as_ref()
     }
 }
 
@@ -236,6 +300,7 @@ fn build_sections(
     for local_z in 0..SECTION_SIDE {
         for local_x in 0..SECTION_SIDE {
             let height = columns.column(local_x, local_z);
+            let overlay = columns.overlay(local_x, local_z).cloned();
             let (biome, top_block, cliff) = match height {
                 Some(surface) => {
                     let (biome, cliff) = terrain.biome_and_cliff_for_height(surface);
@@ -248,6 +313,14 @@ fn build_sections(
                     None,
                 ),
             };
+            let biome = overlay
+                .as_ref()
+                .and_then(|o| o.biome_override())
+                .unwrap_or(biome);
+            let top_block = overlay
+                .as_ref()
+                .and_then(|o| o.surface_block_override())
+                .unwrap_or(top_block);
             let slope_degrees = match (&height, &cliff) {
                 (Some(_), Some(settings)) => columns.slope(local_x, local_z, settings),
                 _ => 0.0,
@@ -258,6 +331,8 @@ fn build_sections(
                 top_block,
                 slope_degrees,
                 cliff,
+                top_thickness_override: overlay.as_ref().and_then(|o| o.top_thickness_override()),
+                bottom_block_override: overlay.as_ref().and_then(|o| o.subsurface_block_override()),
             });
         }
     }
@@ -334,6 +409,8 @@ struct ColumnSettings {
     top_block: Arc<str>,
     slope_degrees: f32,
     cliff: Option<CliffSettings>,
+    top_thickness_override: Option<u32>,
+    bottom_block_override: Option<Arc<str>>,
 }
 
 impl ColumnSettings {
@@ -350,8 +427,8 @@ impl ColumnSettings {
 fn block_for(
     world_y: i32,
     column: &ColumnSettings,
-    top_thickness: u32,
-    bottom_block: &Arc<str>,
+    default_top_thickness: u32,
+    default_bottom_block: &Arc<str>,
 ) -> BlockId {
     if world_y <= BEDROCK_Y {
         return BlockId::Bedrock;
@@ -362,6 +439,10 @@ fn block_for(
     if world_y > surface {
         return BlockId::Air;
     }
+    let top_thickness = column
+        .top_thickness_override
+        .unwrap_or(default_top_thickness)
+        .max(1);
     let depth = surface - world_y;
     if depth < top_thickness as i32 {
         if let Some(block) = column.cliff_block_override() {
@@ -369,7 +450,11 @@ fn block_for(
         }
         BlockId::Named(Arc::clone(&column.top_block))
     } else {
-        BlockId::Named(Arc::clone(bottom_block))
+        let bottom = column
+            .bottom_block_override
+            .as_ref()
+            .unwrap_or(default_bottom_block);
+        BlockId::Named(Arc::clone(bottom))
     }
 }
 

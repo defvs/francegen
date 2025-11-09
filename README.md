@@ -128,3 +128,47 @@ All fields are optional; missing values fall back to the defaults shown above. `
 Set `cliff_generation.enabled` to `true` to automatically replace the entire top layer on steep slopes. The generator scans neighbours within `smoothing_radius` metres (minimum 1), computes their slope angles, and blends the raw maximum with a weighted average using `smoothing_factor` (0 = original behaviour, 1 = fully smoothed). If the blended angle exceeds `angle_threshold_degrees` the whole top-layer thickness swaps to `cliff_generation.block`. Individual `biome_layers` entries can override any of these values via `cliff_angle_threshold_degrees`, `cliff_block`, `cliff_smoothing_radius`, and `cliff_smoothing_factor`, letting you keep snowy cliffs icy while lower elevations stay rocky.
 
 See [`examples/french_alps.json`](examples/french_alps.json) for a full configuration inspired by alpine terrain.
+
+### OpenStreetMap overlays
+
+Add an `osm` block to the JSON config to paint additional materials and biomes using live OSM data fetched via the Overpass API. `francegen` automatically requests the data using the DEM bounds (plus an optional margin) and rasterizes the features onto the existing heightmap before writing region files.
+
+```
+"osm": {
+  "enabled": true,
+  "overpass_url": "https://overpass-api.de/api/interpreter",
+  "bbox_margin_m": 400.0,
+  "layers": [
+    {
+      "name": "paved_roads",
+      "geometry": "line",
+      "width_m": 5.0,
+      "query": "(way[\"highway\"~\"^(primary|secondary|tertiary|residential)$\"]({{bbox}}););",
+      "style": {
+        "surface_block": "minecraft:stone_bricks",
+        "top_thickness": 1
+      }
+    },
+    {
+      "name": "forest_polygons",
+      "geometry": "polygon",
+      "query": "(way[\"landuse\"=\"forest\"]({{bbox}});relation[\"landuse\"=\"forest\"]({{bbox}}););",
+      "style": {
+        "biome": "minecraft:forest",
+        "surface_block": "minecraft:grass_block"
+      }
+    }
+  ]
+}
+```
+
+Key fields:
+
+- `enabled` toggles the overlay stage without editing layers.
+- `bbox_margin_m` expands the DEM-derived bounding box before querying Overpass. Increase this when you want roads that slightly overshoot the clipped DEM area.
+- `layers` describes how to query and render each feature class. Layers later in the list override earlier ones when they overlap.
+  - `geometry`: `"line"` (buffered with `width_m`, measured in meters/blocks) or `"polygon"` (filled area).
+  - `query`: raw OverpassQL inserted between the global `[out:json]…;…;out geom;` wrapper. Use `{{bbox}}` as a placeholder for the lat/lon bounding box.
+  - `style`: at least one of `surface_block`, `subsurface_block`, `top_thickness`, or `biome`. `surface_block` replaces the exposed material, `subsurface_block` controls what fills beneath it, `top_thickness` overrides how many blocks receive the surface material, and `biome` swaps the biome palette.
+
+The generator sends HTTPS requests to the configured Overpass endpoint whenever an `osm` block is present, so make sure outbound network access is available or point `overpass_url` to a local mirror.

@@ -7,6 +7,7 @@ mod generate;
 mod georaster;
 mod locate;
 mod metadata;
+mod osm;
 mod progress;
 mod world;
 

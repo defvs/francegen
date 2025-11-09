@@ -10,6 +10,7 @@ use crate::cli::GenerateConfig;
 use crate::config::TerrainConfig;
 use crate::constants::{BEDROCK_Y, MAX_WORLD_Y};
 use crate::metadata::write_metadata;
+use crate::osm::apply_osm_overlays;
 use crate::progress::progress_bar;
 use crate::world::{WorldBuilder, WorldStats};
 
@@ -93,8 +94,19 @@ pub fn run_generate(config: &GenerateConfig) -> Result<()> {
     let sample_count = builder.sample_count();
     let column_count = builder.column_count();
     let max_radius = terrain_config.max_smoothing_radius();
-    let chunks = builder.into_chunks(max_radius);
+    let mut chunks = builder.into_chunks(max_radius);
     let chunk_count = chunks.len();
+
+    if let Some(osm_config) = terrain_config.osm() {
+        if let (Some(stats), Some(origin_coord)) = (stats.as_ref(), origin.as_ref()) {
+            apply_osm_overlays(&mut chunks, osm_config, stats, *origin_coord)?;
+        } else {
+            println!(
+                "{} Skipping OSM overlays because world origin metadata is unavailable",
+                "⚠".yellow().bold()
+            );
+        }
+    }
 
     let write_stats = write_regions(output, &chunks, &terrain_config)?;
     print_summary(Summary {
