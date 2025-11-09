@@ -11,7 +11,10 @@ use rayon::prelude::*;
 use serde::Serialize;
 
 use crate::config::{CliffSettings, TerrainConfig};
-use crate::constants::{BEDROCK_Y, BLOCKS_PER_SECTION, DATA_VERSION, MAX_WORLD_Y, SECTION_SIDE};
+use crate::constants::{
+    BEDROCK_Y, BLOCKS_PER_SECTION, DATA_VERSION, MAX_WORLD_Y, POST_PROCESSING_SECTION_COUNT,
+    SECTION_SIDE,
+};
 use crate::progress::progress_bar;
 
 const BIOME_SIDE: usize = SECTION_SIDE / 4;
@@ -271,6 +274,12 @@ fn build_chunk_bytes(
         "minecraft:full"
     };
 
+    let post_processing = if terrain.generate_features() {
+        Some(empty_post_processing_lists())
+    } else {
+        None
+    };
+
     let chunk = ChunkNbt {
         data_version: DATA_VERSION,
         last_update: 0,
@@ -282,6 +291,7 @@ fn build_chunk_bytes(
         sections,
         heightmaps,
         structures: StructuresNbt::default(),
+        post_processing,
     };
 
     let bytes = fastnbt::to_bytes(&chunk).context("Failed to serialize chunk NBT")?;
@@ -380,6 +390,14 @@ fn build_heightmaps(columns: &ChunkHeights) -> HeightmapsNbt {
     HeightmapsNbt {
         motion_blocking: LongArray::new(data),
     }
+}
+
+fn empty_post_processing_lists() -> Vec<Vec<i16>> {
+    let mut lists = Vec::with_capacity(POST_PROCESSING_SECTION_COUNT);
+    for _ in 0..POST_PROCESSING_SECTION_COUNT {
+        lists.push(Vec::new());
+    }
+    lists
 }
 
 fn bits_for_range(size: usize) -> usize {
@@ -604,6 +622,8 @@ struct ChunkNbt {
     heightmaps: HeightmapsNbt,
     #[serde(rename = "structures")]
     structures: StructuresNbt,
+    #[serde(rename = "PostProcessing", skip_serializing_if = "Option::is_none")]
+    post_processing: Option<Vec<Vec<i16>>>,
 }
 
 #[derive(Serialize)]

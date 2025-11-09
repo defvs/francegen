@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::Duration;
 
 use anyhow::{Context, Result, anyhow};
 use geo::algorithm::bounding_rect::BoundingRect;
@@ -8,6 +9,7 @@ use geo::{LineString, Point, Polygon};
 use geo_types::Coord;
 use owo_colors::OwoColorize;
 use proj::Proj;
+use reqwest::StatusCode;
 use reqwest::blocking::Client;
 use serde::Deserialize;
 
@@ -17,6 +19,8 @@ use crate::constants::SECTION_SIDE;
 use crate::world::WorldStats;
 
 const OVERPASS_TIMEOUT_SECONDS: u32 = 90;
+const OVERPASS_HTTP_TIMEOUT_SECONDS: u64 = 30;
+const OVERPASS_MAX_RETRIES: usize = 3;
 
 pub fn apply_osm_overlays(
     chunks: &mut HashMap<(i32, i32), ChunkHeights>,
@@ -51,6 +55,7 @@ pub fn apply_osm_overlays(
 
     let client = Client::builder()
         .user_agent("francegen/0.1")
+        .timeout(Duration::from_secs(OVERPASS_HTTP_TIMEOUT_SECONDS))
         .build()
         .context("Failed to build HTTP client for Overpass")?;
 
@@ -61,23 +66,40 @@ pub fn apply_osm_overlays(
             "ℹ".blue().bold(),
             layer.name()
         );
-        let response = client
-            .post(osm.overpass_url())
-            .form(&[("data", query.clone())])
-            .send()
-            .with_context(|| format!("Failed to query Overpass for layer '{}'", layer.name()))?;
-        let status = response.status();
-        let body = response
-            .text()
-            .with_context(|| format!("Failed to read Overpass body for '{}'", layer.name()))?;
-        if !status.is_success() {
+        let mut attempt = 0;
+        let body = loop {
+            attempt += 1;
+            let response = client
+                .post(osm.overpass_url())
+                .form(&[("data", query.clone())])
+                .send()
+                .with_context(|| {
+                    format!("Failed to query Overpass for layer '{}'", layer.name())
+                })?;
+            let status = response.status();
+            let body = response
+                .text()
+                .with_context(|| format!("Failed to read Overpass body for '{}'", layer.name()))?;
+            if status.is_success() {
+                break body;
+            }
+            if status == StatusCode::GATEWAY_TIMEOUT && attempt < OVERPASS_MAX_RETRIES {
+                println!(
+                    "  {} Overpass timed out for '{}', retrying ({}/{})",
+                    "↻".yellow(),
+                    layer.name(),
+                    attempt,
+                    OVERPASS_MAX_RETRIES
+                );
+                continue;
+            }
             anyhow::bail!(
                 "Overpass request for '{}' returned {}. Body: {}",
                 layer.name(),
                 status,
                 trim_preview(&body)
             );
-        }
+        };
         let parsed: OverpassResponse = serde_json::from_str(&body)
             .with_context(|| format!("Failed to parse Overpass JSON for '{}'", layer.name()))?;
         let painted = rasterize_layer(layer, &parsed.elements, &transform, origin, chunks)?;
