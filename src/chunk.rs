@@ -269,9 +269,9 @@ fn build_chunk_bytes(
     let heightmaps = build_heightmaps(columns);
 
     let status = if terrain.generate_features() {
-        "minecraft:liquid_carvers"
+        "liquid_carvers"
     } else {
-        "minecraft:full"
+        "full"
     };
 
     let post_processing = if terrain.generate_features() {
