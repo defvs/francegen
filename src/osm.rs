@@ -1,5 +1,7 @@
+use core::time;
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::thread;
 use std::time::Duration;
 
 use anyhow::{Context, Result, anyhow};
@@ -91,6 +93,7 @@ pub fn apply_osm_overlays(
                     attempt,
                     OVERPASS_MAX_RETRIES
                 );
+                thread::sleep(time::Duration::from_secs(5));
                 continue;
             }
             anyhow::bail!(
