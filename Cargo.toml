@@ -17,3 +17,6 @@ serde_json = "1"
 geo = "0.27"
 proj = "0.27"
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
+image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
+roxmltree = "0.19"
+urlencoding = "2.1"

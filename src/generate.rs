@@ -12,6 +12,7 @@ use crate::constants::{BEDROCK_Y, MAX_WORLD_Y};
 use crate::metadata::write_metadata;
 use crate::osm::apply_osm_overlays;
 use crate::progress::progress_bar;
+use crate::wmts::{WmtsCacheDir, apply_wmts_overlays};
 use crate::world::{WorldBuilder, WorldStats};
 
 pub fn run_generate(config: &GenerateConfig) -> Result<()> {
@@ -97,6 +98,16 @@ pub fn run_generate(config: &GenerateConfig) -> Result<()> {
     let mut chunks = builder.into_chunks(max_radius);
     let chunk_count = chunks.len();
 
+    let cache_dir = if terrain_config
+        .wmts()
+        .map(|cfg| cfg.enabled())
+        .unwrap_or(false)
+    {
+        Some(WmtsCacheDir::prepare(config.cache_dir.clone())?)
+    } else {
+        None
+    };
+
     if let Some(osm_config) = terrain_config.osm() {
         if let (Some(stats), Some(origin_coord)) = (stats.as_ref(), origin.as_ref()) {
             apply_osm_overlays(&mut chunks, osm_config, stats, *origin_coord)?;
@@ -105,6 +116,21 @@ pub fn run_generate(config: &GenerateConfig) -> Result<()> {
                 "{} Skipping OSM overlays because world origin metadata is unavailable",
                 "⚠".yellow().bold()
             );
+        }
+    }
+
+    if let Some(wmts_config) = terrain_config.wmts() {
+        if wmts_config.enabled() {
+            if let (Some(stats), Some(origin_coord)) = (stats.as_ref(), origin.as_ref()) {
+                if let Some(cache) = cache_dir.as_ref() {
+                    apply_wmts_overlays(&mut chunks, wmts_config, stats, *origin_coord, cache)?;
+                }
+            } else {
+                println!(
+                    "{} Skipping WMTS overlays because world origin metadata is unavailable",
+                    "⚠".yellow().bold()
+                );
+            }
         }
     }
 
@@ -123,6 +149,10 @@ pub fn run_generate(config: &GenerateConfig) -> Result<()> {
     if let (Some(stats), Some(origin)) = (stats, origin) {
         let path = write_metadata(output, origin, &stats)?;
         println!("{} Saved metadata: {}", "ℹ".blue().bold(), path.display());
+    }
+
+    if let Some(cache) = cache_dir.as_ref() {
+        cache.cleanup()?;
     }
 
     Ok(())

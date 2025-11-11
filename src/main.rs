@@ -4,11 +4,13 @@ mod cli;
 mod config;
 mod constants;
 mod generate;
+mod geo_utils;
 mod georaster;
 mod locate;
 mod metadata;
 mod osm;
 mod progress;
+mod wmts;
 mod world;
 
 use anyhow::{Result, anyhow};

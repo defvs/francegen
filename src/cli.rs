@@ -4,7 +4,7 @@ use anyhow::{Result, anyhow, bail};
 
 use crate::world::ModelBounds;
 
-const USAGE: &str = "Usage: francegen [--threads <N>] [--config <file>] [--bounds <min_x,min_z,max_x,max_z>] <tif-folder> <output-world>\n       francegen locate <world-dir> <real-x> <real-z> [<real-height>]\n       francegen bounds <tif-folder>";
+const USAGE: &str = "Usage: francegen [--threads <N>] [--config <file>] [--bounds <min_x,min_z,max_x,max_z>] [--cache-dir <path>] <tif-folder> <output-world>\n       francegen locate <world-dir> <real-x> <real-z> [<real-height>]\n       francegen bounds <tif-folder>";
 
 pub enum Command {
     Generate(GenerateConfig),
@@ -19,6 +19,7 @@ pub struct GenerateConfig {
     pub meta_only: bool,
     pub terrain_config: Option<PathBuf>,
     pub bounds: Option<ModelBounds>,
+    pub cache_dir: Option<PathBuf>,
 }
 
 pub struct LocateConfig {
@@ -55,6 +56,7 @@ fn parse_generate(args: &[String]) -> Result<GenerateConfig> {
     let mut meta_only = false;
     let mut terrain_config = None;
     let mut bounds = None;
+    let mut cache_dir = None;
 
     let mut i = 0;
     while i < args.len() {
@@ -92,6 +94,14 @@ fn parse_generate(args: &[String]) -> Result<GenerateConfig> {
             bounds = Some(parse_bounds(&args[i])?);
         } else if let Some(value) = arg.strip_prefix("--bounds=") {
             bounds = Some(parse_bounds(value)?);
+        } else if arg == "--cache-dir" {
+            i += 1;
+            if i >= args.len() {
+                bail!("Missing value for --cache-dir\n{USAGE}");
+            }
+            cache_dir = Some(PathBuf::from(&args[i]));
+        } else if let Some(value) = arg.strip_prefix("--cache-dir=") {
+            cache_dir = Some(PathBuf::from(value));
         } else if input.is_none() {
             input = Some(PathBuf::from(arg));
         } else if output.is_none() {
@@ -112,6 +122,7 @@ fn parse_generate(args: &[String]) -> Result<GenerateConfig> {
         meta_only,
         terrain_config,
         bounds,
+        cache_dir,
     })
 }
 

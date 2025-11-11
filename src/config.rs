@@ -2,8 +2,8 @@ use std::fs;
 use std::path::Path;
 use std::sync::Arc;
 
-use anyhow::{Context, Result, bail};
-use serde::Deserialize;
+use anyhow::{Context, Result, anyhow, bail};
+use serde::{Deserialize, Deserializer};
 
 use crate::world::dem_to_minecraft;
 
@@ -17,6 +17,7 @@ pub struct TerrainConfig {
     top_block_layers: Vec<TopBlockLayer>,
     cliffs: CliffConfig,
     osm: Option<OsmConfig>,
+    wmts: Option<WmtsConfig>,
     generate_features: bool,
 }
 
@@ -97,6 +98,10 @@ impl TerrainConfig {
         self.generate_features
     }
 
+    pub fn wmts(&self) -> Option<&WmtsConfig> {
+        self.wmts.as_ref()
+    }
+
     fn from_file(file: TerrainConfigFile) -> Result<Self> {
         if file.top_layer_thickness == 0 {
             bail!("top_layer_thickness must be greater than 0");
@@ -117,6 +122,10 @@ impl TerrainConfig {
             Some(config) => Some(OsmConfig::from_file(config)?),
             None => None,
         };
+        let wmts = match file.wmts {
+            Some(config) => Some(WmtsConfig::from_file(config)?),
+            None => None,
+        };
         Ok(Self {
             top_layer_block: Arc::<str>::from(file.top_layer_block),
             bottom_layer_block: Arc::<str>::from(file.bottom_layer_block),
@@ -126,6 +135,7 @@ impl TerrainConfig {
             top_block_layers,
             cliffs,
             osm,
+            wmts,
             generate_features: file.generate_features,
         })
     }
@@ -142,6 +152,7 @@ impl Default for TerrainConfig {
             top_block_layers: Vec::new(),
             cliffs: CliffConfig::default(),
             osm: None,
+            wmts: None,
             generate_features: false,
         }
     }
@@ -165,6 +176,8 @@ struct TerrainConfigFile {
     cliff_generation: CliffGenerationFile,
     #[serde(default)]
     osm: Option<OsmConfigFile>,
+    #[serde(default)]
+    wmts: Option<WmtsConfigFile>,
     #[serde(default = "default_generate_features")]
     generate_features: bool,
 }
@@ -512,6 +525,22 @@ fn default_line_width_m() -> f64 {
     3.0
 }
 
+fn default_wmts_enabled() -> bool {
+    false
+}
+
+fn default_wmts_format() -> String {
+    "image/png".to_string()
+}
+
+fn default_wmts_bbox_margin_m() -> f64 {
+    0.0
+}
+
+fn default_wmts_max_tiles() -> u32 {
+    2048
+}
+
 #[derive(Debug, Deserialize)]
 struct OsmConfigFile {
     #[serde(default = "default_osm_enabled")]
@@ -535,7 +564,7 @@ struct OsmLayerFile {
     #[serde(default)]
     priority: Option<u32>,
     #[serde(default)]
-    style: OsmLayerStyleFile,
+    style: OverlayStyleFile,
 }
 
 #[derive(Debug, Deserialize, Clone, Copy)]
@@ -553,7 +582,7 @@ impl Default for OsmGeometryFile {
 }
 
 #[derive(Debug, Deserialize, Default)]
-struct OsmLayerStyleFile {
+struct OverlayStyleFile {
     biome: Option<String>,
     surface_block: Option<String>,
     subsurface_block: Option<String>,
@@ -609,7 +638,7 @@ pub struct OsmLayer {
     query: Arc<str>,
     width_m: f64,
     priority: u32,
-    style: OsmLayerStyle,
+    style: OverlayStyle,
 }
 
 impl OsmLayer {
@@ -627,7 +656,7 @@ impl OsmLayer {
         if matches!(geometry, OsmGeometry::Line) && file.width_m <= 0.0 {
             bail!("line layers must define width_m > 0");
         }
-        let style = OsmLayerStyle::from_file(file.style)?;
+        let style = OverlayStyle::from_file(file.style, "osm.layers[].style")?;
         Ok(Self {
             name: Arc::<str>::from(file.name),
             geometry,
@@ -658,7 +687,7 @@ impl OsmLayer {
         self.priority
     }
 
-    pub fn style(&self) -> &OsmLayerStyle {
+    pub fn style(&self) -> &OverlayStyle {
         &self.style
     }
 }
@@ -670,38 +699,38 @@ pub enum OsmGeometry {
 }
 
 #[derive(Debug, Clone)]
-pub struct OsmLayerStyle {
+pub struct OverlayStyle {
     biome: Option<Arc<str>>,
     surface_block: Option<Arc<str>>,
     subsurface_block: Option<Arc<str>>,
     top_thickness: Option<u32>,
 }
 
-impl OsmLayerStyle {
-    fn from_file(file: OsmLayerStyleFile) -> Result<Self> {
+impl OverlayStyle {
+    fn from_file(file: OverlayStyleFile, context: &str) -> Result<Self> {
         if file.biome.is_none()
             && file.surface_block.is_none()
             && file.subsurface_block.is_none()
             && file.top_thickness.is_none()
         {
             bail!(
-                "osm layer style must set at least one of biome, surface_block, subsurface_block, or top_thickness"
+                "{context} must set at least one of biome, surface_block, subsurface_block, or top_thickness"
             );
         }
         if let Some(thickness) = file.top_thickness {
             if thickness == 0 {
-                bail!("osm.layers[].style.top_thickness must be greater than 0 when provided");
+                bail!("{context}.top_thickness must be greater than 0 when provided");
             }
         }
         Ok(Self {
-            biome: normalize_osm_name(file.biome, "osm.layers[].style.biome")?,
-            surface_block: normalize_osm_name(
+            biome: normalize_style_name(file.biome, &format!("{context}.biome"))?,
+            surface_block: normalize_style_name(
                 file.surface_block,
-                "osm.layers[].style.surface_block",
+                &format!("{context}.surface_block"),
             )?,
-            subsurface_block: normalize_osm_name(
+            subsurface_block: normalize_style_name(
                 file.subsurface_block,
-                "osm.layers[].style.subsurface_block",
+                &format!("{context}.subsurface_block"),
             )?,
             top_thickness: file.top_thickness,
         })
@@ -724,7 +753,7 @@ impl OsmLayerStyle {
     }
 }
 
-fn normalize_osm_name(value: Option<String>, field: &str) -> Result<Option<Arc<str>>> {
+fn normalize_style_name(value: Option<String>, field: &str) -> Result<Option<Arc<str>>> {
     match value {
         Some(name) => {
             if name.trim().is_empty() {
@@ -733,5 +762,315 @@ fn normalize_osm_name(value: Option<String>, field: &str) -> Result<Option<Arc<s
             Ok(Some(Arc::<str>::from(name)))
         }
         None => Ok(None),
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct WmtsConfigFile {
+    #[serde(default = "default_wmts_enabled")]
+    enabled: bool,
+    capabilities_url: Option<String>,
+    layer: Option<String>,
+    #[serde(default)]
+    style_id: Option<String>,
+    tile_matrix_set: Option<String>,
+    tile_matrix: Option<TileMatrixId>,
+    #[serde(default = "default_wmts_format")]
+    format: String,
+    #[serde(default = "default_wmts_bbox_margin_m")]
+    bbox_margin_m: f64,
+    #[serde(default = "default_wmts_max_tiles")]
+    max_tiles: u32,
+    #[serde(default)]
+    colors: Vec<WmtsColorRuleFile>,
+}
+
+#[derive(Debug, Deserialize)]
+struct WmtsColorRuleFile {
+    color: String,
+    #[serde(default)]
+    tolerance: Option<u8>,
+    #[serde(default)]
+    alpha_threshold: Option<u8>,
+    #[serde(default)]
+    priority: Option<u32>,
+    #[serde(default)]
+    style: OverlayStyleFile,
+}
+
+#[derive(Debug, Clone)]
+pub struct WmtsConfig {
+    enabled: bool,
+    capabilities_url: Arc<str>,
+    layer: Arc<str>,
+    style_id: Option<Arc<str>>,
+    tile_matrix_set: Arc<str>,
+    tile_matrix: Arc<str>,
+    format: Arc<str>,
+    bbox_margin_m: f64,
+    max_tiles: u32,
+    colors: Vec<WmtsColorRule>,
+}
+
+impl WmtsConfig {
+    fn from_file(file: WmtsConfigFile) -> Result<Self> {
+        if !file.enabled {
+            return Ok(Self {
+                enabled: false,
+                capabilities_url: Arc::<str>::from(""),
+                layer: Arc::<str>::from(""),
+                style_id: None,
+                tile_matrix_set: Arc::<str>::from(""),
+                tile_matrix: Arc::<str>::from(""),
+                format: Arc::<str>::from(file.format),
+                bbox_margin_m: 0.0,
+                max_tiles: file.max_tiles.max(1),
+                colors: Vec::new(),
+            });
+        }
+
+        let capabilities_url = file
+            .capabilities_url
+            .ok_or_else(|| anyhow!("wmts.capabilities_url is required when wmts.enabled = true"))?;
+        if capabilities_url.trim().is_empty() {
+            bail!("wmts.capabilities_url must not be empty");
+        }
+
+        let layer = file
+            .layer
+            .ok_or_else(|| anyhow!("wmts.layer is required when wmts.enabled = true"))?;
+        if layer.trim().is_empty() {
+            bail!("wmts.layer must not be empty");
+        }
+
+        let tile_matrix_set = file
+            .tile_matrix_set
+            .ok_or_else(|| anyhow!("wmts.tile_matrix_set is required when wmts.enabled = true"))?;
+        if tile_matrix_set.trim().is_empty() {
+            bail!("wmts.tile_matrix_set must not be empty");
+        }
+
+        let tile_matrix = file
+            .tile_matrix
+            .ok_or_else(|| anyhow!("wmts.tile_matrix is required when wmts.enabled = true"))?;
+
+        if file.colors.is_empty() {
+            bail!("wmts.colors must contain at least one rule when wmts.enabled = true");
+        }
+
+        let mut colors = Vec::with_capacity(file.colors.len());
+        for (idx, rule) in file.colors.into_iter().enumerate() {
+            colors.push(WmtsColorRule::from_file(rule, idx as u32)?);
+        }
+
+        Ok(Self {
+            enabled: true,
+            capabilities_url: Arc::<str>::from(capabilities_url),
+            layer: Arc::<str>::from(layer),
+            style_id: match file.style_id {
+                Some(id) if id.trim().is_empty() => {
+                    bail!("wmts.style_id must not be empty when provided");
+                }
+                Some(id) => Some(Arc::<str>::from(id)),
+                None => None,
+            },
+            tile_matrix_set: Arc::<str>::from(tile_matrix_set),
+            tile_matrix: Arc::<str>::from(tile_matrix.into_inner()),
+            format: Arc::<str>::from(file.format),
+            bbox_margin_m: file.bbox_margin_m.max(0.0),
+            max_tiles: file.max_tiles.max(1),
+            colors,
+        })
+    }
+
+    pub fn enabled(&self) -> bool {
+        self.enabled
+    }
+
+    pub fn capabilities_url(&self) -> &str {
+        &self.capabilities_url
+    }
+
+    pub fn layer(&self) -> &str {
+        &self.layer
+    }
+
+    pub fn style_id(&self) -> Option<&str> {
+        self.style_id.as_deref()
+    }
+
+    pub fn tile_matrix_set(&self) -> &str {
+        &self.tile_matrix_set
+    }
+
+    pub fn tile_matrix(&self) -> &str {
+        &self.tile_matrix
+    }
+
+    pub fn format(&self) -> &str {
+        &self.format
+    }
+
+    pub fn bbox_margin_m(&self) -> f64 {
+        self.bbox_margin_m
+    }
+
+    pub fn max_tiles(&self) -> u32 {
+        self.max_tiles
+    }
+
+    pub fn colors(&self) -> &[WmtsColorRule] {
+        &self.colors
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct WmtsColorRule {
+    color: RgbaColor,
+    tolerance: u8,
+    alpha_threshold: u8,
+    priority: u32,
+    style: OverlayStyle,
+}
+
+impl WmtsColorRule {
+    fn from_file(file: WmtsColorRuleFile, index: u32) -> Result<Self> {
+        let color = RgbaColor::parse(&file.color)
+            .with_context(|| format!("Invalid wmts.colors[{index}].color value"))?;
+        let tolerance = file.tolerance.unwrap_or(0);
+        let alpha_threshold = file.alpha_threshold.unwrap_or(1);
+        let priority = file.priority.unwrap_or(index);
+        let style = OverlayStyle::from_file(file.style, &format!("wmts.colors[{index}].style"))?;
+        Ok(Self {
+            color,
+            tolerance,
+            alpha_threshold,
+            priority,
+            style,
+        })
+    }
+
+    pub fn priority(&self) -> u32 {
+        self.priority
+    }
+
+    pub fn style(&self) -> &OverlayStyle {
+        &self.style
+    }
+
+    pub fn matches(&self, rgba: [u8; 4]) -> bool {
+        if rgba[3] < self.alpha_threshold {
+            return false;
+        }
+        let alpha_matches = if self.color.a < 255 {
+            rgba[3].abs_diff(self.color.a) <= self.tolerance
+        } else {
+            true
+        };
+        alpha_matches
+            && rgba[0].abs_diff(self.color.r) <= self.tolerance
+            && rgba[1].abs_diff(self.color.g) <= self.tolerance
+            && rgba[2].abs_diff(self.color.b) <= self.tolerance
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct RgbaColor {
+    pub r: u8,
+    pub g: u8,
+    pub b: u8,
+    pub a: u8,
+}
+
+impl RgbaColor {
+    fn parse(value: &str) -> Result<Self> {
+        let trimmed = value.trim();
+        let hex = trimmed.strip_prefix('#').unwrap_or(trimmed);
+        let bytes = match hex.len() {
+            6 => hex_to_bytes(hex)?,
+            8 => hex_to_bytes(hex)?,
+            _ => {
+                bail!("expected 6 or 8 hex digits, found '{}'", value);
+            }
+        };
+        if bytes.len() == 3 {
+            Ok(Self {
+                r: bytes[0],
+                g: bytes[1],
+                b: bytes[2],
+                a: 255,
+            })
+        } else {
+            Ok(Self {
+                r: bytes[0],
+                g: bytes[1],
+                b: bytes[2],
+                a: bytes[3],
+            })
+        }
+    }
+}
+
+fn hex_to_bytes(raw: &str) -> Result<Vec<u8>> {
+    if raw.len() % 2 != 0 {
+        bail!("hex string must have even length");
+    }
+    let mut bytes = Vec::with_capacity(raw.len() / 2);
+    let chars: Vec<char> = raw.chars().collect();
+    for chunk in chars.chunks(2) {
+        let pair: String = chunk.iter().collect();
+        let value =
+            u8::from_str_radix(&pair, 16).with_context(|| format!("Invalid hex pair '{pair}'"))?;
+        bytes.push(value);
+    }
+    Ok(bytes)
+}
+
+#[derive(Debug)]
+struct TileMatrixId(String);
+
+impl TileMatrixId {
+    fn into_inner(self) -> String {
+        self.0
+    }
+}
+
+impl<'de> Deserialize<'de> for TileMatrixId {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        struct Visitor;
+
+        impl<'de> serde::de::Visitor<'de> for Visitor {
+            type Value = TileMatrixId;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+                formatter.write_str("a string or integer tile matrix identifier")
+            }
+
+            fn visit_u64<E>(self, value: u64) -> std::result::Result<Self::Value, E>
+            where
+                E: serde::de::Error,
+            {
+                Ok(TileMatrixId(value.to_string()))
+            }
+
+            fn visit_str<E>(self, value: &str) -> std::result::Result<Self::Value, E>
+            where
+                E: serde::de::Error,
+            {
+                Ok(TileMatrixId(value.to_string()))
+            }
+
+            fn visit_string<E>(self, value: String) -> std::result::Result<Self::Value, E>
+            where
+                E: serde::de::Error,
+            {
+                Ok(TileMatrixId(value))
+            }
+        }
+
+        deserializer.deserialize_any(Visitor)
     }
 }

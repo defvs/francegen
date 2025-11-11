@@ -101,5 +101,35 @@
         }
       }
     ]
+  },
+  "wmts": {
+    "enabled": true,
+    "capabilities_url": "https://data.geopf.fr/wmts?REQUEST=GetCapabilities&service=WMTS",
+    "layer": "IGNF_COSIA_2024",
+    "style_id": "normal",
+    "tile_matrix_set": "PM_6_18",
+    "tile_matrix": 15,
+    "format": "image/png",
+    "bbox_margin_m": 150.0,
+    "max_tiles": 4096,
+    "colors": [
+      {
+        "color": "#2b8cbe",
+        "tolerance": 12,
+        "style": {
+          "surface_block": "minecraft:water",
+          "top_thickness": 4,
+          "subsurface_block": "minecraft:clay"
+        }
+      },
+      {
+        "color": "#5ca636",
+        "tolerance": 18,
+        "style": {
+          "biome": "minecraft:forest",
+          "surface_block": "minecraft:grass_block"
+        }
+      }
+    ]
   }
 }

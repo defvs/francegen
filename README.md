@@ -20,6 +20,7 @@ francegen [--threads <N>] [--meta-only] [--bounds <min_x,min_z,max_x,max_z>] <ti
 | `--threads <N>` | Override Rayon’s worker count. Defaults to the number of logical CPUs. |
 | `--meta-only` | Read the tiles and emit only metadata (no region files). Useful to grab the origin before committing to a full build. |
 | `--config <file>` | Load a JSON terrain configuration file to control block layers and the base biome. |
+| `--cache-dir <path>` | Directory for cached remote downloads (WMTS tiles today, future features later). Defaults to a temporary folder that is deleted after the run. |
 | `--bounds <min_x,min_z,max_x,max_z>` | Clip generation to a rectangle in real/model coordinates (metres in the GeoTIFF CRS, matching `francegen locate`). |
 
 During ingestion the tool prints world-size estimates, DEM min/max, and the origin in model space. When generation finishes, it writes the usual `region/` directory plus a `francegen_meta.json` file inside `<output-world>` containing the GeoTIFF origin and bounds.
@@ -175,3 +176,37 @@ Key fields:
   - `style`: at least one of `surface_block`, `subsurface_block`, `top_thickness`, or `biome`. `surface_block` replaces the exposed material, `subsurface_block` controls what fills beneath it, `top_thickness` overrides how many blocks receive the surface material, and `biome` swaps the biome palette.
 
 The generator sends HTTPS requests to the configured Overpass endpoint whenever an `osm` block is present, so make sure outbound network access is available or point `overpass_url` to a local mirror.
+
+### WMTS overlays
+
+You can also paint landuse from a tiled WMTS layer. Add a `wmts` block to the config to download raster tiles from the advertised GetCapabilities document, map specific colors to biomes/blocks, and stamp them directly onto the terrain columns:
+
+```json
+"wmts": {
+  "enabled": true,
+  "capabilities_url": "https://data.geopf.fr/wmts?REQUEST=GetCapabilities&service=WMTS",
+  "layer": "IGNF_COSIA_2024",
+  "style_id": "normal",
+  "tile_matrix_set": "PM_6_18",
+  "tile_matrix": 15,
+  "format": "image/png",
+  "bbox_margin_m": 200.0,
+  "max_tiles": 4096,
+  "colors": [
+    {
+      "color": "#2b8cbe",
+      "tolerance": 12,
+      "style": { "surface_block": "minecraft:water", "subsurface_block": "minecraft:clay" }
+    },
+    {
+      "color": "#5ca636",
+      "tolerance": 18,
+      "style": { "biome": "minecraft:forest", "surface_block": "minecraft:grass_block" }
+    }
+  ]
+}
+```
+
+`capabilities_url`, `layer`, `tile_matrix_set`, and `tile_matrix` identify which WMTS layer/zoom to sample. Each `colors` entry describes a target pixel (hex `#RRGGBB` or `#RRGGBBAA`) plus an optional per-channel `tolerance` and the overlay style to apply when that color is seen. `alpha_threshold` filters out transparent pixels, while `priority` controls how the result competes with other overlays.
+
+Tiles are prefetched before rasterization. By default they are downloaded once per run into a unique temporary directory that is deleted at the end; pass `--cache-dir <path>` to reuse or inspect the files between runs. Increase `max_tiles` if you deliberately need a wide bbox/zoom combination.
