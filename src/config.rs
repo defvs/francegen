@@ -564,6 +564,8 @@ struct OsmLayerFile {
     #[serde(default)]
     priority: Option<u32>,
     #[serde(default)]
+    layer_index: Option<i32>,
+    #[serde(default)]
     style: OverlayStyleFile,
 }
 
@@ -606,6 +608,7 @@ impl OsmConfig {
         for (idx, layer) in file.layers.into_iter().enumerate() {
             layers.push(OsmLayer::from_file(layer, idx as u32)?);
         }
+        reorder_osm_layers(&mut layers);
         Ok(Self {
             enabled: file.enabled,
             overpass_url: Arc::<str>::from(file.overpass_url),
@@ -639,6 +642,8 @@ pub struct OsmLayer {
     width_m: f64,
     priority: u32,
     style: OverlayStyle,
+    layer_index: Option<i32>,
+    original_order: u32,
 }
 
 impl OsmLayer {
@@ -657,13 +662,16 @@ impl OsmLayer {
             bail!("line layers must define width_m > 0");
         }
         let style = OverlayStyle::from_file(file.style, "osm.layers[].style")?;
+        let layer_index = file.layer_index.or(file.priority.map(|value| value as i32));
         Ok(Self {
             name: Arc::<str>::from(file.name),
             geometry,
             query: Arc::<str>::from(file.query),
             width_m: file.width_m.max(0.5),
-            priority: file.priority.unwrap_or(implicit_priority),
+            priority: implicit_priority,
             style,
+            layer_index,
+            original_order: implicit_priority,
         })
     }
 
@@ -689,6 +697,18 @@ impl OsmLayer {
 
     pub fn style(&self) -> &OverlayStyle {
         &self.style
+    }
+
+    pub fn layer_index(&self) -> Option<i32> {
+        self.layer_index
+    }
+
+    pub fn original_order(&self) -> u32 {
+        self.original_order
+    }
+
+    pub fn set_priority(&mut self, value: u32) {
+        self.priority = value;
     }
 }
 
@@ -765,6 +785,49 @@ fn normalize_style_name(value: Option<String>, field: &str) -> Result<Option<Arc
     }
 }
 
+fn reorder_osm_layers(layers: &mut Vec<OsmLayer>) {
+    layers.sort_by(|a, b| {
+        compare_layer_order(
+            a.layer_index(),
+            b.layer_index(),
+            a.original_order(),
+            b.original_order(),
+        )
+    });
+    for (rank, layer) in layers.iter_mut().enumerate() {
+        layer.set_priority(rank as u32);
+    }
+}
+
+fn reorder_wmts_rules(rules: &mut Vec<WmtsColorRule>) {
+    rules.sort_by(|a, b| {
+        compare_layer_order(
+            a.layer_index(),
+            b.layer_index(),
+            a.original_order(),
+            b.original_order(),
+        )
+    });
+    for (rank, rule) in rules.iter_mut().enumerate() {
+        rule.set_priority(rank as u32);
+    }
+}
+
+fn compare_layer_order(
+    a_index: Option<i32>,
+    b_index: Option<i32>,
+    a_order: u32,
+    b_order: u32,
+) -> std::cmp::Ordering {
+    use std::cmp::Ordering;
+    let a_idx = a_index.unwrap_or(0);
+    let b_idx = b_index.unwrap_or(0);
+    match b_idx.cmp(&a_idx) {
+        Ordering::Equal => a_order.cmp(&b_order),
+        other => other,
+    }
+}
+
 #[derive(Debug, Deserialize)]
 struct WmtsConfigFile {
     #[serde(default = "default_wmts_enabled")]
@@ -794,6 +857,8 @@ struct WmtsColorRuleFile {
     alpha_threshold: Option<u8>,
     #[serde(default)]
     priority: Option<u32>,
+    #[serde(default)]
+    layer_index: Option<i32>,
     #[serde(default)]
     style: OverlayStyleFile,
 }
@@ -862,6 +927,7 @@ impl WmtsConfig {
         for (idx, rule) in file.colors.into_iter().enumerate() {
             colors.push(WmtsColorRule::from_file(rule, idx as u32)?);
         }
+        reorder_wmts_rules(&mut colors);
 
         Ok(Self {
             enabled: true,
@@ -931,22 +997,26 @@ pub struct WmtsColorRule {
     alpha_threshold: u8,
     priority: u32,
     style: OverlayStyle,
+    layer_index: Option<i32>,
+    original_order: u32,
 }
 
 impl WmtsColorRule {
-    fn from_file(file: WmtsColorRuleFile, index: u32) -> Result<Self> {
+    fn from_file(file: WmtsColorRuleFile, position: u32) -> Result<Self> {
         let color = RgbaColor::parse(&file.color)
-            .with_context(|| format!("Invalid wmts.colors[{index}].color value"))?;
+            .with_context(|| format!("Invalid wmts.colors[{position}].color value"))?;
         let tolerance = file.tolerance.unwrap_or(0);
         let alpha_threshold = file.alpha_threshold.unwrap_or(1);
-        let priority = file.priority.unwrap_or(index);
-        let style = OverlayStyle::from_file(file.style, &format!("wmts.colors[{index}].style"))?;
+        let style = OverlayStyle::from_file(file.style, &format!("wmts.colors[{position}].style"))?;
+        let layer_index = file.layer_index.or(file.priority.map(|value| value as i32));
         Ok(Self {
             color,
             tolerance,
             alpha_threshold,
-            priority,
+            priority: position,
             style,
+            layer_index,
+            original_order: position,
         })
     }
 
@@ -956,6 +1026,18 @@ impl WmtsColorRule {
 
     pub fn style(&self) -> &OverlayStyle {
         &self.style
+    }
+
+    pub fn layer_index(&self) -> Option<i32> {
+        self.layer_index
+    }
+
+    pub fn original_order(&self) -> u32 {
+        self.original_order
+    }
+
+    pub fn set_priority(&mut self, value: u32) {
+        self.priority = value;
     }
 
     pub fn matches(&self, rgba: [u8; 4]) -> bool {

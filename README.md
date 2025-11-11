@@ -174,8 +174,13 @@ Key fields:
   - `geometry`: `"line"` (buffered with `width_m`, measured in meters/blocks) or `"polygon"` (filled area).
   - `query`: raw OverpassQL inserted between the global `[out:json]…;…;out geom;` wrapper. Use `{{bbox}}` as a placeholder for the lat/lon bounding box.
   - `style`: at least one of `surface_block`, `subsurface_block`, `top_thickness`, or `biome`. `surface_block` replaces the exposed material, `subsurface_block` controls what fills beneath it, `top_thickness` overrides how many blocks receive the surface material, and `biome` swaps the biome palette.
+  - `layer_index` (optional): controls when the layer is applied relative to other OSM/WMTS overlays. Higher values paint earlier, while lower values paint later (and therefore win). When omitted the layer behaves as if `layer_index = 0`, and ties fall back to the order in the JSON array.
 
 The generator sends HTTPS requests to the configured Overpass endpoint whenever an `osm` block is present, so make sure outbound network access is available or point `overpass_url` to a local mirror.
+
+### Layer ordering
+
+Painting happens in three passes: `biome_layers`, `top_block_layers`, and finally all OSM/WMTS overlays. The overlay pass sorts every OSM layer and WMTS color rule by `layer_index` (highest first). When two entries share the same index—or leave it unset—they keep the order from the configuration array. Because the lowest index is applied last, give the overlays you want on top the smallest numbers (even negatives) and leave background fillers at larger values.
 
 ### WMTS overlays
 
@@ -196,17 +201,19 @@ You can also paint landuse from a tiled WMTS layer. Add a `wmts` block to the co
     {
       "color": "#2b8cbe",
       "tolerance": 12,
+      "layer_index": 20,
       "style": { "surface_block": "minecraft:water", "subsurface_block": "minecraft:clay" }
     },
     {
       "color": "#5ca636",
       "tolerance": 18,
+      "layer_index": 2,
       "style": { "biome": "minecraft:forest", "surface_block": "minecraft:grass_block" }
     }
   ]
 }
 ```
 
-`capabilities_url`, `layer`, `tile_matrix_set`, and `tile_matrix` identify which WMTS layer/zoom to sample. Each `colors` entry describes a target pixel (hex `#RRGGBB` or `#RRGGBBAA`) plus an optional per-channel `tolerance` and the overlay style to apply when that color is seen. `alpha_threshold` filters out transparent pixels, while `priority` controls how the result competes with other overlays.
+`capabilities_url`, `layer`, `tile_matrix_set`, and `tile_matrix` identify which WMTS layer/zoom to sample. Each `colors` entry describes a target pixel (hex `#RRGGBB` or `#RRGGBBAA`) plus an optional per-channel `tolerance` and the overlay style to apply when that color is seen. `alpha_threshold` filters out transparent pixels, while `layer_index` mirrors the OSM behavior for ordering.
 
 Tiles are prefetched before rasterization. By default they are downloaded once per run into a unique temporary directory that is deleted at the end; pass `--cache-dir <path>` to reuse or inspect the files between runs. Increase `max_tiles` if you deliberately need a wide bbox/zoom combination.

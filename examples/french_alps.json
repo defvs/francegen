@@ -35,6 +35,7 @@
         "name": "waterways",
         "geometry": "line",
         "width_m": 4.0,
+        "layer_index": 30,
         "query": "(way[\"waterway\"~\"^(river|stream)$\"]({{bbox}}););",
         "style": {
           "surface_block": "minecraft:water",
@@ -45,6 +46,7 @@
       {
         "name": "water_polygons",
         "geometry": "polygon",
+        "layer_index": 25,
         "query": "(way[\"natural\"=\"water\"]({{bbox}});relation[\"natural\"=\"water\"]({{bbox}}););",
         "style": {
           "surface_block": "minecraft:water",
@@ -55,6 +57,7 @@
       {
         "name": "dense_forest",
         "geometry": "polygon",
+        "layer_index": 5,
         "query": "(way[\"natural\"=\"wood\"]({{bbox}});way[\"landuse\"=\"forest\"]({{bbox}});relation[\"landuse\"=\"forest\"]({{bbox}}););",
         "style": {
           "biome": "minecraft:forest",
@@ -84,6 +87,7 @@
         "name": "paved_roads",
         "geometry": "line",
         "width_m": 5.0,
+        "layer_index": 15,
         "query": "(way[\"highway\"~\"^(motorway|trunk|primary|secondary|tertiary|residential|unclassified|service)$\"]({{bbox}}););",
         "style": {
           "surface_block": "minecraft:black_concrete",
@@ -93,6 +97,7 @@
       {
         "name": "buildings",
         "geometry": "polygon",
+        "layer_index": 8,
         "query": "(way[\"building\"]({{bbox}});relation[\"building\"]({{bbox}}););",
         "style": {
           "surface_block": "minecraft:spruce_planks",
@@ -116,6 +121,7 @@
       {
         "color": "#2b8cbe",
         "tolerance": 12,
+        "layer_index": 20,
         "style": {
           "surface_block": "minecraft:water",
           "top_thickness": 4,
@@ -125,6 +131,7 @@
       {
         "color": "#5ca636",
         "tolerance": 18,
+        "layer_index": 2,
         "style": {
           "biome": "minecraft:forest",
           "surface_block": "minecraft:grass_block"
