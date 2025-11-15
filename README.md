@@ -20,7 +20,7 @@ francegen [--threads <N>] [--meta-only] [--bounds <min_x,min_z,max_x,max_z>] <ti
 | `--threads <N>` | Override Rayon’s worker count. Defaults to the number of logical CPUs. |
 | `--meta-only` | Read the tiles and emit only metadata (no region files). Useful to grab the origin before committing to a full build. |
 | `--config <file>` | Load a JSON terrain configuration file to control block layers and the base biome. |
-| `--cache-dir <path>` | Directory for cached remote downloads (WMTS tiles today, future features later). Defaults to a temporary folder that is deleted after the run. |
+| `--cache-dir <path>` | Directory for cached remote downloads (Overpass responses and WMTS tiles). Defaults to a temporary folder that is deleted after the run. |
 | `--bounds <min_x,min_z,max_x,max_z>` | Clip generation to a rectangle in real/model coordinates (metres in the GeoTIFF CRS, matching `francegen locate`). |
 
 During ingestion the tool prints world-size estimates, DEM min/max, and the origin in model space. When generation finishes, it writes the usual `region/` directory plus a `francegen_meta.json` file inside `<output-world>` containing the GeoTIFF origin and bounds.
@@ -176,7 +176,7 @@ Key fields:
   - `style`: at least one of `surface_block`, `subsurface_block`, `top_thickness`, or `biome`. `surface_block` replaces the exposed material, `subsurface_block` controls what fills beneath it, `top_thickness` overrides how many blocks receive the surface material, and `biome` swaps the biome palette.
   - `layer_index` (optional): controls when the layer is applied relative to other OSM/WMTS overlays. Higher values paint earlier, while lower values paint later (and therefore win). When omitted the layer behaves as if `layer_index = 0`, and ties fall back to the order in the JSON array.
 
-The generator sends HTTPS requests to the configured Overpass endpoint whenever an `osm` block is present, so make sure outbound network access is available or point `overpass_url` to a local mirror.
+The generator sends HTTPS requests to the configured Overpass endpoint whenever an `osm` block is present, so make sure outbound network access is available or point `overpass_url` to a local mirror. Pass `--cache-dir <path>` to persist the JSON responses inside `<path>/overpass/` and reuse them between runs instead of re-querying the API.
 
 ### Layer ordering
 

@@ -848,6 +848,7 @@ struct WmtsConfigFile {
     colors: Vec<WmtsColorRuleFile>,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 struct WmtsColorRuleFile {
     #[serde(default)]

@@ -103,19 +103,32 @@ pub fn run_generate(config: &GenerateConfig) -> Result<()> {
     );
     let chunk_count = chunks.len();
 
-    let cache_dir = if terrain_config
+    let mut wmts_cache = None;
+    let mut cache_root = None;
+    if terrain_config
         .wmts()
         .map(|cfg| cfg.enabled())
         .unwrap_or(false)
     {
-        Some(WmtsCacheDir::prepare(config.cache_dir.clone())?)
-    } else {
-        None
-    };
+        let cache = WmtsCacheDir::prepare(config.cache_dir.clone())?;
+        cache_root = Some(cache.root().to_path_buf());
+        wmts_cache = Some(cache);
+    } else if let Some(path) = config.cache_dir.as_ref() {
+        fs::create_dir_all(path).with_context(|| {
+            format!("Failed to create cache dir {}", path.display())
+        })?;
+        cache_root = Some(path.clone());
+    }
 
     if let Some(osm_config) = terrain_config.osm() {
         if let (Some(stats), Some(origin_coord)) = (stats.as_ref(), origin.as_ref()) {
-            apply_osm_overlays(&mut chunks, osm_config, stats, *origin_coord)?;
+            apply_osm_overlays(
+                &mut chunks,
+                osm_config,
+                stats,
+                *origin_coord,
+                cache_root.as_deref(),
+            )?;
         } else {
             println!(
                 "{} Skipping OSM overlays because world origin metadata is unavailable",
@@ -127,7 +140,7 @@ pub fn run_generate(config: &GenerateConfig) -> Result<()> {
     if let Some(wmts_config) = terrain_config.wmts() {
         if wmts_config.enabled() {
             if let (Some(stats), Some(origin_coord)) = (stats.as_ref(), origin.as_ref()) {
-                if let Some(cache) = cache_dir.as_ref() {
+                if let Some(cache) = wmts_cache.as_ref() {
                     apply_wmts_overlays(&mut chunks, wmts_config, stats, *origin_coord, cache)?;
                 }
             } else {
@@ -156,7 +169,7 @@ pub fn run_generate(config: &GenerateConfig) -> Result<()> {
         println!("{} Saved metadata: {}", "ℹ".blue().bold(), path.display());
     }
 
-    if let Some(cache) = cache_dir.as_ref() {
+    if let Some(cache) = wmts_cache.as_ref() {
         cache.cleanup()?;
     }
 

@@ -1,5 +1,9 @@
 use core::time;
+use std::collections::hash_map::DefaultHasher;
 use std::collections::HashMap;
+use std::fs;
+use std::hash::{Hash, Hasher};
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
@@ -22,17 +26,24 @@ use crate::world::WorldStats;
 
 const OVERPASS_TIMEOUT_SECONDS: u32 = 90;
 const OVERPASS_HTTP_TIMEOUT_SECONDS: u64 = 30;
-const OVERPASS_MAX_RETRIES: usize = 10;
+const OVERPASS_MAX_RETRIES: usize = 100;
+const OVERPASS_RETRY_WAIT_DURATION: Duration = time::Duration::from_secs(5);
 
 pub fn apply_osm_overlays(
     chunks: &mut HashMap<(i32, i32), ChunkHeights>,
     osm: &OsmConfig,
     stats: &WorldStats,
     origin: Coord,
+    cache_root: Option<&Path>,
 ) -> Result<()> {
     if chunks.is_empty() || !osm.enabled() {
         return Ok(());
     }
+
+    let cache = match cache_root {
+        Some(root) => Some(OverpassCache::prepare(root)?),
+        None => None,
+    };
 
     let transform = CoordinateTransformer::new()?;
     let bbox = WorldBoundingBox::from_stats(stats, origin, osm.bbox_margin_m());
@@ -59,60 +70,91 @@ pub fn apply_osm_overlays(
 
     for layer in osm.layers() {
         let query = build_query(layer, &bbox_param);
-        println!(
-            "{} Fetching layer '{}' via Overpass",
-            "ℹ".blue().bold(),
-            layer.name()
-        );
-        let mut attempt = 0;
-        let body = loop {
-            attempt += 1;
-            let response = match client.post(osm.overpass_url()).form(&[("data", query.clone())]).send() {
-                Ok(response) => response,
-                Err(err) => {
-                    if attempt < OVERPASS_MAX_RETRIES {
-                        println!(
-                            "  {} Overpass request failed for '{}', retrying ({}/{})",
-                            "↻".yellow(),
-                            layer.name(),
-                            attempt,
-                            OVERPASS_MAX_RETRIES
-                        );
-                        client = build_overpass_client()?;
-                        thread::sleep(time::Duration::from_secs(5));
-                        continue;
-                    } else {
-                        return Err(err).with_context(|| {
-                            format!("Failed to query Overpass for layer '{}'", layer.name())
-                        });
-                    }
-                }
-            };
-            let status = response.status();
-            let body = response
-                .text()
-                .with_context(|| format!("Failed to read Overpass body for '{}'", layer.name()))?;
-            if status.is_success() {
-                break body;
-            }
-            if status != StatusCode::OK && attempt < OVERPASS_MAX_RETRIES {
-                println!(
-                    "  {} Overpass timed out for '{}', retrying ({}/{})",
-                    "↻".yellow(),
-                    layer.name(),
-                    attempt,
-                    OVERPASS_MAX_RETRIES
-                );
-                client = build_overpass_client()?;
-                thread::sleep(time::Duration::from_secs(5));
-                continue;
-            }
-            anyhow::bail!(
-                "Overpass request for '{}' returned {}. Body: {}",
+        let cached_body = match cache.as_ref() {
+            Some(cache) => cache.load(layer.name(), &query)?,
+            None => None,
+        };
+        let body = if let Some(entry) = cached_body {
+            println!(
+                "{} Using cached Overpass response for '{}' ({}).",
+                "◎".blue(),
                 layer.name(),
-                status,
-                trim_preview(&body)
+                entry.path.display()
             );
+            entry.body
+        } else {
+            println!(
+                "{} Fetching layer '{}' via Overpass",
+                "ℹ".blue().bold(),
+                layer.name()
+            );
+            let mut attempt = 0;
+            let body = loop {
+                attempt += 1;
+                let response = match client
+                    .post(osm.overpass_url())
+                    .form(&[("data", query.clone())])
+                    .send()
+                {
+                    Ok(response) => response,
+                    Err(err) => {
+                        if attempt < OVERPASS_MAX_RETRIES {
+                            println!(
+                                "  {} Overpass request failed for '{}', retrying ({}/{})",
+                                "↻".yellow(),
+                                layer.name(),
+                                attempt,
+                                OVERPASS_MAX_RETRIES
+                            );
+                            client = build_overpass_client()?;
+                            thread::sleep(OVERPASS_RETRY_WAIT_DURATION);
+                            continue;
+                        } else {
+                            return Err(err).with_context(|| {
+                                format!("Failed to query Overpass for layer '{}'", layer.name())
+                            });
+                        }
+                    }
+                };
+                let status = response.status();
+                let body = response.text().with_context(|| {
+                    format!(
+                        "Failed to read Overpass body for '{}'",
+                        layer.name()
+                    )
+                })?;
+                if status.is_success() {
+                    break body;
+                }
+                if status != StatusCode::OK && attempt < OVERPASS_MAX_RETRIES {
+                    println!(
+                        "  {} Overpass timed out for '{}', retrying ({}/{})",
+                        "↻".yellow(),
+                        layer.name(),
+                        attempt,
+                        OVERPASS_MAX_RETRIES
+                    );
+                    client = build_overpass_client()?;
+                    thread::sleep(OVERPASS_RETRY_WAIT_DURATION);
+                    continue;
+                }
+                anyhow::bail!(
+                    "Overpass request for '{}' returned {}. Body: {}",
+                    layer.name(),
+                    status,
+                    trim_preview(&body)
+                );
+            };
+            if let Some(cache) = cache.as_ref() {
+                let path = cache.store(layer.name(), &query, &body)?;
+                println!(
+                    "  {} Cached Overpass response for '{}' at {}",
+                    "◎".blue(),
+                    layer.name(),
+                    path.display()
+                );
+            }
+            body
         };
         let parsed: OverpassResponse = serde_json::from_str(&body)
             .with_context(|| format!("Failed to parse Overpass JSON for '{}'", layer.name()))?;
@@ -322,4 +364,76 @@ fn trim_preview(body: &str) -> String {
     } else {
         format!("{}…", body[..LIMIT].trim())
     }
+}
+
+struct OverpassCache {
+    dir: PathBuf,
+}
+
+impl OverpassCache {
+    fn prepare(root: &Path) -> Result<Self> {
+        let cache_root = root.join("overpass");
+        fs::create_dir_all(&cache_root).with_context(|| {
+            format!(
+                "Failed to create Overpass cache directory {}",
+                cache_root.display()
+            )
+        })?;
+        Ok(Self { dir: cache_root })
+    }
+
+    fn load(&self, layer: &str, query: &str) -> Result<Option<CachedResponse>> {
+        let path = self.entry_path(layer, query);
+        if !path.exists() {
+            return Ok(None);
+        }
+        let body = fs::read_to_string(&path).with_context(|| {
+            format!(
+                "Failed to read cached Overpass response {}",
+                path.display()
+            )
+        })?;
+        Ok(Some(CachedResponse { body, path }))
+    }
+
+    fn store(&self, layer: &str, query: &str, body: &str) -> Result<PathBuf> {
+        let path = self.entry_path(layer, query);
+        fs::write(&path, body).with_context(|| {
+            format!(
+                "Failed to write cached Overpass response {}",
+                path.display()
+            )
+        })?;
+        Ok(path)
+    }
+
+    fn entry_path(&self, layer: &str, query: &str) -> PathBuf {
+        let mut name = sanitize_for_filename(layer);
+        name.push('_');
+        name.push_str(&hash_query(layer, query));
+        name.push_str(".json");
+        self.dir.join(name)
+    }
+}
+
+struct CachedResponse {
+    body: String,
+    path: PathBuf,
+}
+
+fn hash_query(layer: &str, query: &str) -> String {
+    let mut hasher = DefaultHasher::new();
+    layer.hash(&mut hasher);
+    query.hash(&mut hasher);
+    format!("{:016x}", hasher.finish())
+}
+
+fn sanitize_for_filename(value: &str) -> String {
+    value
+        .chars()
+        .map(|ch| match ch {
+            'A'..='Z' | 'a'..='z' | '0'..='9' | '-' | '_' => ch,
+            _ => '_',
+        })
+        .collect()
 }
