@@ -96,6 +96,11 @@ pub fn run_generate(config: &GenerateConfig) -> Result<()> {
     let column_count = builder.column_count();
     let max_radius = terrain_config.max_smoothing_radius();
     let mut chunks = builder.into_chunks(max_radius);
+    println!(
+        "{} Generated chunk data for {} column(s)",
+        "✔".green().bold(),
+        column_count
+    );
     let chunk_count = chunks.len();
 
     let cache_dir = if terrain_config

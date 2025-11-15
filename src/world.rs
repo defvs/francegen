@@ -1,12 +1,15 @@
 use std::collections::HashMap;
 use std::path::Path;
+use std::sync::Arc;
 
 use anyhow::Result;
 use geo_types::Coord;
+use rayon::prelude::*;
 
 use crate::chunk::{ChunkHeights, SlopeProfile, SlopeStats};
 use crate::constants::{BEDROCK_Y, MAX_WORLD_Y, SECTION_SIDE};
 use crate::georaster::GeoRaster;
+use crate::progress::progress_bar;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ModelBounds {
@@ -117,18 +120,53 @@ impl WorldBuilder {
     }
 
     pub fn into_chunks(self, max_smoothing_radius: u32) -> HashMap<(i32, i32), ChunkHeights> {
-        let columns = self.columns;
-        let mut chunks: HashMap<(i32, i32), ChunkHeights> = HashMap::new();
+        let columns = Arc::new(self.columns);
+        let total = columns.len();
+        let chunk_pb = Arc::new(progress_bar(total as u64, "Generating chunk data"));
         let radius = max_smoothing_radius as i32;
-        for (&(x, z), &height) in columns.iter() {
-            let chunk_x = x.div_euclid(SECTION_SIDE as i32);
-            let chunk_z = z.div_euclid(SECTION_SIDE as i32);
-            let local_x = x.rem_euclid(SECTION_SIDE as i32) as usize;
-            let local_z = z.rem_euclid(SECTION_SIDE as i32) as usize;
-            let slope_profile = slope_profile_for(x, z, height, &columns, radius);
+        let smoothing_radius = max_smoothing_radius as usize;
+
+        struct ChunkWork {
+            chunk_coords: (i32, i32),
+            local_x: usize,
+            local_z: usize,
+            height: i32,
+            slope_profile: SlopeProfile,
+        }
+
+        let work: Vec<ChunkWork> = columns
+            .par_iter()
+            .map(|(&(x, z), &height)| {
+                let chunk_x = x.div_euclid(SECTION_SIDE as i32);
+                let chunk_z = z.div_euclid(SECTION_SIDE as i32);
+                let local_x = x.rem_euclid(SECTION_SIDE as i32) as usize;
+                let local_z = z.rem_euclid(SECTION_SIDE as i32) as usize;
+                let slope_profile = slope_profile_for(x, z, height, columns.as_ref(), radius);
+                chunk_pb.inc(1);
+                ChunkWork {
+                    chunk_coords: (chunk_x, chunk_z),
+                    local_x,
+                    local_z,
+                    height,
+                    slope_profile,
+                }
+            })
+            .collect();
+
+        chunk_pb.finish_and_clear();
+
+        let mut chunks: HashMap<(i32, i32), ChunkHeights> = HashMap::new();
+        for work_item in work {
+            let ChunkWork {
+                chunk_coords,
+                local_x,
+                local_z,
+                height,
+                slope_profile,
+            } = work_item;
             let entry = chunks
-                .entry((chunk_x, chunk_z))
-                .or_insert_with(|| ChunkHeights::new(max_smoothing_radius as usize));
+                .entry(chunk_coords)
+                .or_insert_with(|| ChunkHeights::new(smoothing_radius));
             entry.set(local_x, local_z, height, slope_profile);
         }
         chunks
