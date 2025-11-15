@@ -22,7 +22,7 @@ use crate::world::WorldStats;
 
 const OVERPASS_TIMEOUT_SECONDS: u32 = 90;
 const OVERPASS_HTTP_TIMEOUT_SECONDS: u64 = 30;
-const OVERPASS_MAX_RETRIES: usize = 3;
+const OVERPASS_MAX_RETRIES: usize = 10;
 
 pub fn apply_osm_overlays(
     chunks: &mut HashMap<(i32, i32), ChunkHeights>,
@@ -55,11 +55,7 @@ pub fn apply_osm_overlays(
         latlon_bounds.east
     );
 
-    let client = Client::builder()
-        .user_agent("francegen/0.1")
-        .timeout(Duration::from_secs(OVERPASS_HTTP_TIMEOUT_SECONDS))
-        .build()
-        .context("Failed to build HTTP client for Overpass")?;
+    let mut client = build_overpass_client()?;
 
     for layer in osm.layers() {
         let query = build_query(layer, &bbox_param);
@@ -71,13 +67,27 @@ pub fn apply_osm_overlays(
         let mut attempt = 0;
         let body = loop {
             attempt += 1;
-            let response = client
-                .post(osm.overpass_url())
-                .form(&[("data", query.clone())])
-                .send()
-                .with_context(|| {
-                    format!("Failed to query Overpass for layer '{}'", layer.name())
-                })?;
+            let response = match client.post(osm.overpass_url()).form(&[("data", query.clone())]).send() {
+                Ok(response) => response,
+                Err(err) => {
+                    if attempt < OVERPASS_MAX_RETRIES {
+                        println!(
+                            "  {} Overpass request failed for '{}', retrying ({}/{})",
+                            "↻".yellow(),
+                            layer.name(),
+                            attempt,
+                            OVERPASS_MAX_RETRIES
+                        );
+                        client = build_overpass_client()?;
+                        thread::sleep(time::Duration::from_secs(5));
+                        continue;
+                    } else {
+                        return Err(err).with_context(|| {
+                            format!("Failed to query Overpass for layer '{}'", layer.name())
+                        });
+                    }
+                }
+            };
             let status = response.status();
             let body = response
                 .text()
@@ -85,7 +95,7 @@ pub fn apply_osm_overlays(
             if status.is_success() {
                 break body;
             }
-            if status == StatusCode::GATEWAY_TIMEOUT && attempt < OVERPASS_MAX_RETRIES {
+            if status != StatusCode::OK && attempt < OVERPASS_MAX_RETRIES {
                 println!(
                     "  {} Overpass timed out for '{}', retrying ({}/{})",
                     "↻".yellow(),
@@ -93,6 +103,7 @@ pub fn apply_osm_overlays(
                     attempt,
                     OVERPASS_MAX_RETRIES
                 );
+                client = build_overpass_client()?;
                 thread::sleep(time::Duration::from_secs(5));
                 continue;
             }
@@ -115,6 +126,14 @@ pub fn apply_osm_overlays(
     }
 
     Ok(())
+}
+
+fn build_overpass_client() -> Result<Client> {
+    Client::builder()
+        .user_agent("francegen/0.1")
+        .timeout(Duration::from_secs(OVERPASS_HTTP_TIMEOUT_SECONDS))
+        .build()
+        .context("Failed to build HTTP client for Overpass")
 }
 
 fn build_query(layer: &OsmLayer, bbox_param: &str) -> String {
