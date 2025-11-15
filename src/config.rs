@@ -850,6 +850,8 @@ struct WmtsConfigFile {
 
 #[derive(Debug, Deserialize)]
 struct WmtsColorRuleFile {
+    #[serde(default)]
+    name: Option<String>,
     color: String,
     #[serde(default)]
     tolerance: Option<u8>,
