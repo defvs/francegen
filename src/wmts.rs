@@ -18,6 +18,7 @@ use crate::chunk::{ChunkHeights, ColumnOverlay};
 use crate::config::{WmtsColorRule, WmtsConfig};
 use crate::constants::SECTION_SIDE;
 use crate::geo_utils::{CoordinateTransformer, WorldBoundingBox};
+use crate::progress::progress_bar;
 use crate::world::WorldStats;
 
 const WMTS_HTTP_TIMEOUT_SECONDS: u64 = 30;
@@ -436,11 +437,8 @@ fn prefetch_tiles(
     extension: &str,
     cache: &WmtsCacheDir,
 ) -> Result<()> {
-    let client = Client::builder()
-        .timeout(Duration::from_secs(WMTS_HTTP_TIMEOUT_SECONDS))
-        .user_agent("francegen/0.1")
-        .build()
-        .context("Failed to build WMTS HTTP client")?;
+    let mut client = build_wmts_tile_client()?;
+    let pb = progress_bar(tiles.len() as u64, "Prefetching WMTS tiles");
 
     for tile in tiles {
         let path = cache.tile_path(
@@ -451,6 +449,7 @@ fn prefetch_tiles(
             extension,
         );
         if path.exists() {
+            pb.inc(1);
             continue;
         }
         let url = build_tile_url(
@@ -466,12 +465,29 @@ fn prefetch_tiles(
         let mut attempt = 0;
         let bytes = loop {
             attempt += 1;
-            let response = client.get(&url).send().with_context(|| {
-                format!(
-                    "Failed to fetch WMTS tile row {} col {}",
-                    tile.row, tile.col
-                )
-            })?;
+            let response = match client.get(&url).send() {
+                Ok(response) => response,
+                Err(err) => {
+                    if attempt <= WMTS_FETCH_RETRIES {
+                        println!(
+                            "  {} Retrying WMTS tile ({}, {}) after network error: {}",
+                            "↻".yellow(),
+                            tile.row,
+                            tile.col,
+                            err
+                        );
+                        client = build_wmts_tile_client()?;
+                        continue;
+                    } else {
+                        return Err(err).with_context(|| {
+                            format!(
+                                "Failed to fetch WMTS tile row {} col {}",
+                                tile.row, tile.col
+                            )
+                        });
+                    }
+                }
+            };
             if response.status() == StatusCode::OK {
                 let body = response.bytes().context("Failed to read WMTS tile body")?;
                 break body;
@@ -495,8 +511,18 @@ fn prefetch_tiles(
         };
         fs::write(&path, &bytes)
             .with_context(|| format!("Failed to write WMTS tile {}", path.display()))?;
+        pb.inc(1);
     }
+    pb.finish_with_message("WMTS tiles ready");
     Ok(())
+}
+
+fn build_wmts_tile_client() -> Result<Client> {
+    Client::builder()
+        .timeout(Duration::from_secs(WMTS_HTTP_TIMEOUT_SECONDS))
+        .user_agent("francegen/0.1")
+        .build()
+        .context("Failed to build WMTS HTTP client")
 }
 
 fn build_tile_url(
