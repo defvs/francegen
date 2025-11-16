@@ -172,6 +172,31 @@ pub struct WriteStats {
     pub chunks_written: usize,
 }
 
+#[derive(Clone, Copy)]
+struct ChunkJob {
+    chunk_x: i32,
+    chunk_z: i32,
+    is_empty: bool,
+}
+
+impl ChunkJob {
+    fn filled(chunk_x: i32, chunk_z: i32) -> Self {
+        Self {
+            chunk_x,
+            chunk_z,
+            is_empty: false,
+        }
+    }
+
+    fn empty(chunk_x: i32, chunk_z: i32) -> Self {
+        Self {
+            chunk_x,
+            chunk_z,
+            is_empty: true,
+        }
+    }
+}
+
 pub fn write_regions(
     output: &Path,
     chunks: &HashMap<(i32, i32), ChunkHeights>,
@@ -188,14 +213,50 @@ pub fn write_regions(
     fs::create_dir_all(&region_dir)
         .with_context(|| format!("Failed to create region directory {}", region_dir.display()))?;
 
-    let mut per_region: HashMap<(i32, i32), Vec<(i32, i32)>> = HashMap::new();
+    let mut per_region: HashMap<(i32, i32), Vec<ChunkJob>> = HashMap::new();
+    let mut min_chunk_x = i32::MAX;
+    let mut max_chunk_x = i32::MIN;
+    let mut min_chunk_z = i32::MAX;
+    let mut max_chunk_z = i32::MIN;
     for (&(chunk_x, chunk_z), _) in chunks.iter() {
         let region_x = chunk_x.div_euclid(32);
         let region_z = chunk_z.div_euclid(32);
         per_region
             .entry((region_x, region_z))
             .or_default()
-            .push((chunk_x, chunk_z));
+            .push(ChunkJob::filled(chunk_x, chunk_z));
+        min_chunk_x = min_chunk_x.min(chunk_x);
+        max_chunk_x = max_chunk_x.max(chunk_x);
+        min_chunk_z = min_chunk_z.min(chunk_z);
+        max_chunk_z = max_chunk_z.max(chunk_z);
+    }
+
+    let padding = terrain.empty_chunk_radius() as i32;
+    if padding > 0 && min_chunk_x <= max_chunk_x && min_chunk_z <= max_chunk_z {
+        let padded_min_x = min_chunk_x.saturating_sub(padding);
+        let padded_max_x = max_chunk_x.saturating_add(padding);
+        let padded_min_z = min_chunk_z.saturating_sub(padding);
+        let padded_max_z = max_chunk_z.saturating_add(padding);
+        for chunk_x in padded_min_x..=padded_max_x {
+            for chunk_z in padded_min_z..=padded_max_z {
+                if chunks.contains_key(&(chunk_x, chunk_z)) {
+                    continue;
+                }
+                if chunk_x >= min_chunk_x
+                    && chunk_x <= max_chunk_x
+                    && chunk_z >= min_chunk_z
+                    && chunk_z <= max_chunk_z
+                {
+                    continue;
+                }
+                let region_x = chunk_x.div_euclid(32);
+                let region_z = chunk_z.div_euclid(32);
+                per_region
+                    .entry((region_x, region_z))
+                    .or_default()
+                    .push(ChunkJob::empty(chunk_x, chunk_z));
+            }
+        }
     }
 
     let total_chunks: usize = per_region.values().map(|v| v.len()).sum();
@@ -216,18 +277,25 @@ pub fn write_regions(
             let pb = pb.clone();
             let mut region = create_region(region_dir.as_ref(), region_x, region_z)?;
             let mut written = 0usize;
-            for (chunk_x, chunk_z) in coords {
-                if let Some(columns) = chunks.get(&(chunk_x, chunk_z)) {
-                    if let Some(data) = build_chunk_bytes(chunk_x, chunk_z, columns, terrain)? {
-                        let local_x = chunk_x.rem_euclid(32) as usize;
-                        let local_z = chunk_z.rem_euclid(32) as usize;
-                        region
-                            .write_chunk(local_x, local_z, &data)
-                            .with_context(|| {
-                                format!("Failed to write chunk at ({chunk_x}, {chunk_z})")
-                            })?;
-                        written += 1;
-                    }
+            for job in coords {
+                let chunk_x = job.chunk_x;
+                let chunk_z = job.chunk_z;
+                let data = if job.is_empty {
+                    Some(build_empty_chunk_bytes(chunk_x, chunk_z, terrain)?)
+                } else if let Some(columns) = chunks.get(&(chunk_x, chunk_z)) {
+                    build_chunk_bytes(chunk_x, chunk_z, columns, terrain)?
+                } else {
+                    None
+                };
+                if let Some(bytes) = data {
+                    let local_x = chunk_x.rem_euclid(32) as usize;
+                    let local_z = chunk_z.rem_euclid(32) as usize;
+                    region
+                        .write_chunk(local_x, local_z, &bytes)
+                        .with_context(|| {
+                            format!("Failed to write chunk at ({chunk_x}, {chunk_z})")
+                        })?;
+                    written += 1;
                 }
                 pb.inc(1);
             }
@@ -303,6 +371,36 @@ fn build_chunk_bytes(
 
     let bytes = fastnbt::to_bytes(&chunk).context("Failed to serialize chunk NBT")?;
     Ok(Some(bytes))
+}
+
+fn build_empty_chunk_bytes(chunk_x: i32, chunk_z: i32, terrain: &TerrainConfig) -> Result<Vec<u8>> {
+    let status = if terrain.generate_features() {
+        "minecraft:liquid_carvers"
+    } else {
+        "minecraft:full"
+    };
+
+    let post_processing = if terrain.generate_features() {
+        Some(empty_post_processing_lists())
+    } else {
+        None
+    };
+
+    let chunk = ChunkNbt {
+        data_version: DATA_VERSION,
+        last_update: 0,
+        inhabited_time: 0,
+        x_pos: chunk_x,
+        z_pos: chunk_z,
+        y_pos: (BEDROCK_Y.div_euclid(SECTION_SIDE as i32)) as i32,
+        status: status.to_string(),
+        sections: Vec::new(),
+        heightmaps: empty_heightmaps(),
+        structures: StructuresNbt::default(),
+        post_processing,
+    };
+
+    fastnbt::to_bytes(&chunk).context("Failed to serialize empty chunk NBT")
 }
 
 fn build_sections(
@@ -402,9 +500,19 @@ fn build_heightmaps(columns: &ChunkHeights) -> HeightmapsNbt {
         }
     }
 
+    heightmaps_from_values(&heights)
+}
+
+fn empty_heightmaps() -> HeightmapsNbt {
+    let height = (BEDROCK_Y - BEDROCK_Y + 1).max(0) as u64;
+    let heights = vec![height; SECTION_SIDE * SECTION_SIDE];
+    heightmaps_from_values(&heights)
+}
+
+fn heightmaps_from_values(values: &[u64]) -> HeightmapsNbt {
     let max_range = (MAX_WORLD_Y - BEDROCK_Y + 2) as usize;
     let bits = bits_for_range(max_range);
-    let data = pack_unsigned(&heights, bits);
+    let data = pack_unsigned(values, bits);
     HeightmapsNbt {
         motion_blocking: LongArray::new(data),
     }

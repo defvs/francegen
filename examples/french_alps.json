@@ -4,6 +4,7 @@
   "bottom_layer_block": "minecraft:stone",
   "base_biome": "minecraft:plains",
   "generate_features": true,
+  "empty_chunk_radius": 32,
   "cliff_generation": {
     "enabled": true,
     "angle_threshold_degrees": 55.0,

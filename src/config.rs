@@ -19,6 +19,7 @@ pub struct TerrainConfig {
     osm: Option<OsmConfig>,
     wmts: Option<WmtsConfig>,
     generate_features: bool,
+    empty_chunk_radius: u32,
 }
 
 impl TerrainConfig {
@@ -102,6 +103,10 @@ impl TerrainConfig {
         self.wmts.as_ref()
     }
 
+    pub fn empty_chunk_radius(&self) -> u32 {
+        self.empty_chunk_radius
+    }
+
     fn from_file(file: TerrainConfigFile) -> Result<Self> {
         if file.top_layer_thickness == 0 {
             bail!("top_layer_thickness must be greater than 0");
@@ -137,6 +142,7 @@ impl TerrainConfig {
             osm,
             wmts,
             generate_features: file.generate_features,
+            empty_chunk_radius: file.empty_chunk_radius,
         })
     }
 }
@@ -154,6 +160,7 @@ impl Default for TerrainConfig {
             osm: None,
             wmts: None,
             generate_features: false,
+            empty_chunk_radius: default_empty_chunk_radius(),
         }
     }
 }
@@ -180,6 +187,8 @@ struct TerrainConfigFile {
     wmts: Option<WmtsConfigFile>,
     #[serde(default = "default_generate_features")]
     generate_features: bool,
+    #[serde(default = "default_empty_chunk_radius")]
+    empty_chunk_radius: u32,
 }
 
 fn default_bottom_layer() -> String {
@@ -200,6 +209,10 @@ fn default_base_biome() -> String {
 
 fn default_generate_features() -> bool {
     false
+}
+
+fn default_empty_chunk_radius() -> u32 {
+    32
 }
 
 fn default_smoothing_radius() -> u32 {
