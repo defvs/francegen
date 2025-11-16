@@ -12,9 +12,8 @@ Generate Minecraft Java Edition worlds from GeoTIFF heightmaps – one block per
 ## Quickstart (developers)
 
 1. Install the latest stable Rust via `rustup`.
-2. Use `cargo fmt --all`, `cargo clippy --all-targets -- -D warnings`, and `cargo test` before sending changes.
+2. Use `cargo fmt --all`, and `cargo build` before sending changes.
 3. Iterate with `cargo run -- --config examples/french_alps.json <tif-folder> <output-world>` to validate code against sample data.
-4. Read the [Developer Guide](docs/developers/contributing.md) for workflow details, project structure, and release tips.
 
 ## Documentation
 
@@ -22,4 +21,3 @@ All extended documentation now lives in [`docs/`](docs/README.md):
 
 - [User Getting Started](docs/users/getting_started.md)
 - [User Configuration Reference](docs/users/configuration.md)
-- [Developer Guide](docs/developers/contributing.md)
