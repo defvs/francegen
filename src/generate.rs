@@ -6,7 +6,7 @@ use anyhow::{Context, Result, anyhow, bail};
 use geo_types::Coord;
 use owo_colors::OwoColorize;
 
-use crate::chunk::{write_regions, ChunkHeights};
+use crate::chunk::{ChunkHeights, write_regions};
 use crate::cli::GenerateConfig;
 use crate::config::TerrainConfig;
 use crate::constants::{BEDROCK_Y, MAX_WORLD_Y, SECTION_SIDE};
@@ -15,7 +15,7 @@ use crate::osm::apply_osm_overlays;
 use crate::progress::progress_bar;
 use crate::wmts::{WmtsCacheDir, apply_wmts_overlays};
 use crate::world::{WorldBuilder, WorldStats};
-use crate::world_template::{apply_world_template, SpawnSettings};
+use crate::world_template::{SpawnSettings, apply_world_template};
 
 const DEFAULT_SPAWN_Y: i32 = (MAX_WORLD_Y + BEDROCK_Y) / 2;
 

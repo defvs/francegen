@@ -5,9 +5,9 @@ use std::path::Path;
 
 use anyhow::{Context, Result, bail};
 use fastnbt::{self, IntArray, Value};
+use flate2::Compression;
 use flate2::read::GzDecoder;
 use flate2::write::GzEncoder;
-use flate2::Compression;
 use serde::{Deserialize, Serialize};
 
 const TEMPLATE_ROOT: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/resources/world_template");
@@ -65,8 +65,8 @@ fn copy_datapacks(template_dir: &Path, output: &Path) -> Result<()> {
 fn copy_dir_recursive(src: &Path, dest: &Path) -> Result<()> {
     fs::create_dir_all(dest)
         .with_context(|| format!("Failed to create directory {}", dest.display()))?;
-    for entry in fs::read_dir(src)
-        .with_context(|| format!("Failed to read directory {}", src.display()))?
+    for entry in
+        fs::read_dir(src).with_context(|| format!("Failed to read directory {}", src.display()))?
     {
         let entry = entry?;
         let entry_path = entry.path();
