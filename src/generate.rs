@@ -114,9 +114,8 @@ pub fn run_generate(config: &GenerateConfig) -> Result<()> {
         cache_root = Some(cache.root().to_path_buf());
         wmts_cache = Some(cache);
     } else if let Some(path) = config.cache_dir.as_ref() {
-        fs::create_dir_all(path).with_context(|| {
-            format!("Failed to create cache dir {}", path.display())
-        })?;
+        fs::create_dir_all(path)
+            .with_context(|| format!("Failed to create cache dir {}", path.display()))?;
         cache_root = Some(path.clone());
     }
 

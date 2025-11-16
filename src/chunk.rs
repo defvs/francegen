@@ -269,9 +269,9 @@ fn build_chunk_bytes(
     let heightmaps = build_heightmaps(columns);
 
     let status = if terrain.generate_features() {
-        "liquid_carvers"
+        "minecraft:liquid_carvers"
     } else {
-        "full"
+        "minecraft:full"
     };
 
     let post_processing = if terrain.generate_features() {
@@ -341,14 +341,24 @@ fn build_sections(
                 (Some(_), Some(settings)) => columns.slope(local_x, local_z, settings),
                 _ => 0.0,
             };
+            let column_top_thickness = overlay
+                .as_ref()
+                .and_then(|o| o.top_thickness_override())
+                .unwrap_or(top_thickness)
+                .max(1);
+            let biome_min_y = height.map(|surface| {
+                let min_y = surface as i64 - column_top_thickness as i64 + 1;
+                min_y.clamp(i32::MIN as i64, i32::MAX as i64) as i32
+            });
             column_settings.push(ColumnSettings {
                 height,
                 biome,
                 top_block,
                 slope_degrees,
                 cliff,
-                top_thickness_override: overlay.as_ref().and_then(|o| o.top_thickness_override()),
+                top_thickness: column_top_thickness,
                 bottom_block_override: overlay.as_ref().and_then(|o| o.subsurface_block_override()),
+                biome_min_y,
             });
         }
     }
@@ -360,8 +370,9 @@ fn build_sections(
             for local_z in 0..SECTION_SIDE {
                 for local_x in 0..SECTION_SIDE {
                     let column = &column_settings[local_z * SECTION_SIDE + local_x];
-                    let block = block_for(world_y, column, top_thickness, &bottom_block);
-                    builder.set(local_x, local_y, local_z, block, &column.biome);
+                    let block = block_for(world_y, column, &bottom_block);
+                    let biome = column.biome_for_y(world_y, &default_biome);
+                    builder.set(local_x, local_y, local_z, block, biome);
                 }
             }
         }
@@ -433,8 +444,9 @@ struct ColumnSettings {
     top_block: Arc<str>,
     slope_degrees: f32,
     cliff: Option<CliffSettings>,
-    top_thickness_override: Option<u32>,
+    top_thickness: u32,
     bottom_block_override: Option<Arc<str>>,
+    biome_min_y: Option<i32>,
 }
 
 impl ColumnSettings {
@@ -446,14 +458,16 @@ impl ColumnSettings {
             None
         }
     }
+
+    fn biome_for_y<'a>(&'a self, world_y: i32, base_biome: &'a Arc<str>) -> &'a Arc<str> {
+        match self.biome_min_y {
+            Some(min_y) if world_y >= min_y => &self.biome,
+            _ => base_biome,
+        }
+    }
 }
 
-fn block_for(
-    world_y: i32,
-    column: &ColumnSettings,
-    default_top_thickness: u32,
-    default_bottom_block: &Arc<str>,
-) -> BlockId {
+fn block_for(world_y: i32, column: &ColumnSettings, default_bottom_block: &Arc<str>) -> BlockId {
     if world_y <= BEDROCK_Y {
         return BlockId::Bedrock;
     }
@@ -463,12 +477,9 @@ fn block_for(
     if world_y > surface {
         return BlockId::Air;
     }
-    let top_thickness = column
-        .top_thickness_override
-        .unwrap_or(default_top_thickness)
-        .max(1);
+    let top_thickness_i32 = column.top_thickness.max(1).min(i32::MAX as u32) as i32;
     let depth = surface - world_y;
-    if depth < top_thickness as i32 {
+    if depth < top_thickness_i32 {
         if let Some(block) = column.cliff_block_override() {
             return BlockId::Named(block);
         }

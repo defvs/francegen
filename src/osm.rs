@@ -1,6 +1,6 @@
 use core::time;
-use std::collections::hash_map::DefaultHasher;
 use std::collections::HashMap;
+use std::collections::hash_map::DefaultHasher;
 use std::fs;
 use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
@@ -118,10 +118,7 @@ pub fn apply_osm_overlays(
                 };
                 let status = response.status();
                 let body = response.text().with_context(|| {
-                    format!(
-                        "Failed to read Overpass body for '{}'",
-                        layer.name()
-                    )
+                    format!("Failed to read Overpass body for '{}'", layer.name())
                 })?;
                 if status.is_success() {
                     break body;
@@ -388,10 +385,7 @@ impl OverpassCache {
             return Ok(None);
         }
         let body = fs::read_to_string(&path).with_context(|| {
-            format!(
-                "Failed to read cached Overpass response {}",
-                path.display()
-            )
+            format!("Failed to read cached Overpass response {}", path.display())
         })?;
         Ok(Some(CachedResponse { body, path }))
     }
