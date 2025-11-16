@@ -123,6 +123,7 @@ pub fn apply_wmts_overlays(
     stats: &WorldStats,
     origin: Coord,
     cache: &WmtsCacheDir,
+    order_offset: u32,
 ) -> Result<()> {
     if chunks.is_empty() || !config.enabled() {
         return Ok(());
@@ -244,7 +245,7 @@ pub fn apply_wmts_overlays(
     )?;
 
     let tile_images = load_tiles(&coverage.tiles, cache, config, extension)?;
-    let prepared_rules = prepare_rules(config.colors());
+    let prepared_rules = prepare_rules(config.colors(), order_offset);
     let tile_lookup = TileLookup {
         coverage,
         matrix,
@@ -269,20 +270,25 @@ struct PreparedRule<'a> {
     overlay: ColumnOverlay,
 }
 
-fn prepare_rules(rules: &[WmtsColorRule]) -> Vec<PreparedRule<'_>> {
+fn prepare_rules(rules: &[WmtsColorRule], order_offset: u32) -> Vec<PreparedRule<'_>> {
     rules
         .iter()
-        .map(|rule| PreparedRule {
-            rule,
-            overlay: ColumnOverlay::new(
-                rule.priority(),
-                rule.style().biome().map(|value| Arc::clone(value)),
-                rule.style().surface_block().map(|value| Arc::clone(value)),
-                rule.style()
-                    .subsurface_block()
-                    .map(|value| Arc::clone(value)),
-                rule.style().top_thickness(),
-            ),
+        .map(|rule| {
+            let layer_index = rule.layer_index().unwrap_or(0);
+            let order = order_offset.saturating_add(rule.original_order());
+            PreparedRule {
+                rule,
+                overlay: ColumnOverlay::new(
+                    layer_index,
+                    order,
+                    rule.style().biome().map(|value| Arc::clone(value)),
+                    rule.style().surface_block().map(|value| Arc::clone(value)),
+                    rule.style()
+                        .subsurface_block()
+                        .map(|value| Arc::clone(value)),
+                    rule.style().top_thickness(),
+                ),
+            }
         })
         .collect()
 }

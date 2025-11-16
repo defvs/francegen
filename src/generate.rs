@@ -91,6 +91,10 @@ pub fn run_generate(config: &GenerateConfig) -> Result<()> {
         }
         None => TerrainConfig::default(),
     };
+    let osm_layer_count = terrain_config
+        .osm()
+        .map(|cfg| cfg.layers().len() as u32)
+        .unwrap_or(0);
 
     let sample_count = builder.sample_count();
     let column_count = builder.column_count();
@@ -127,6 +131,7 @@ pub fn run_generate(config: &GenerateConfig) -> Result<()> {
                 stats,
                 *origin_coord,
                 cache_root.as_deref(),
+                0,
             )?;
         } else {
             println!(
@@ -140,7 +145,14 @@ pub fn run_generate(config: &GenerateConfig) -> Result<()> {
         if wmts_config.enabled() {
             if let (Some(stats), Some(origin_coord)) = (stats.as_ref(), origin.as_ref()) {
                 if let Some(cache) = wmts_cache.as_ref() {
-                    apply_wmts_overlays(&mut chunks, wmts_config, stats, *origin_coord, cache)?;
+                    apply_wmts_overlays(
+                        &mut chunks,
+                        wmts_config,
+                        stats,
+                        *origin_coord,
+                        cache,
+                        osm_layer_count,
+                    )?;
                 }
             } else {
                 println!(

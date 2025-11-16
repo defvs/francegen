@@ -24,7 +24,8 @@ const _: [(); SECTION_SIDE % 4] = [];
 
 #[derive(Clone)]
 pub struct ColumnOverlay {
-    priority: u32,
+    layer_index: i32,
+    order: u32,
     biome: Option<Arc<str>>,
     surface_block: Option<Arc<str>>,
     subsurface_block: Option<Arc<str>>,
@@ -33,14 +34,16 @@ pub struct ColumnOverlay {
 
 impl ColumnOverlay {
     pub fn new(
-        priority: u32,
+        layer_index: i32,
+        order: u32,
         biome: Option<Arc<str>>,
         surface_block: Option<Arc<str>>,
         subsurface_block: Option<Arc<str>>,
         top_thickness: Option<u32>,
     ) -> Self {
         Self {
-            priority,
+            layer_index,
+            order,
             biome,
             surface_block,
             subsurface_block,
@@ -48,8 +51,12 @@ impl ColumnOverlay {
         }
     }
 
-    pub fn priority(&self) -> u32 {
-        self.priority
+    fn outranks(&self, other: &ColumnOverlay) -> bool {
+        if self.layer_index != other.layer_index {
+            self.layer_index < other.layer_index
+        } else {
+            self.order > other.order
+        }
     }
 
     pub fn biome_override(&self) -> Option<Arc<str>> {
@@ -147,7 +154,7 @@ impl ChunkHeights {
     pub fn apply_overlay(&mut self, x: usize, z: usize, overlay: ColumnOverlay) {
         let idx = z * SECTION_SIDE + x;
         let replace = match &self.overlays[idx] {
-            Some(current) if current.priority() > overlay.priority() => false,
+            Some(current) if current.outranks(&overlay) => false,
             _ => true,
         };
         if replace {

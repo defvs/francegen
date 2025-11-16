@@ -35,6 +35,7 @@ pub fn apply_osm_overlays(
     stats: &WorldStats,
     origin: Coord,
     cache_root: Option<&Path>,
+    order_offset: u32,
 ) -> Result<()> {
     if chunks.is_empty() || !osm.enabled() {
         return Ok(());
@@ -155,7 +156,14 @@ pub fn apply_osm_overlays(
         };
         let parsed: OverpassResponse = serde_json::from_str(&body)
             .with_context(|| format!("Failed to parse Overpass JSON for '{}'", layer.name()))?;
-        let painted = rasterize_layer(layer, &parsed.elements, &transform, origin, chunks)?;
+        let painted = rasterize_layer(
+            layer,
+            &parsed.elements,
+            &transform,
+            origin,
+            chunks,
+            order_offset,
+        )?;
         println!(
             "  {} Applied {} overlay column{}",
             "✔".green().bold(),
@@ -197,9 +205,13 @@ fn rasterize_layer(
     transform: &CoordinateTransformer,
     origin: Coord,
     chunks: &mut HashMap<(i32, i32), ChunkHeights>,
+    order_offset: u32,
 ) -> Result<usize> {
+    let layer_index = layer.layer_index().unwrap_or(0);
+    let order = order_offset.saturating_add(layer.original_order());
     let overlay = ColumnOverlay::new(
-        layer.priority(),
+        layer_index,
+        order,
         layer.style().biome().map(|value| Arc::clone(value)),
         layer.style().surface_block().map(|value| Arc::clone(value)),
         layer

@@ -640,14 +640,13 @@ pub struct OsmLayer {
     geometry: OsmGeometry,
     query: Arc<str>,
     width_m: f64,
-    priority: u32,
     style: OverlayStyle,
     layer_index: Option<i32>,
     original_order: u32,
 }
 
 impl OsmLayer {
-    fn from_file(file: OsmLayerFile, implicit_priority: u32) -> Result<Self> {
+    fn from_file(file: OsmLayerFile, original_order: u32) -> Result<Self> {
         if file.name.trim().is_empty() {
             bail!("osm layer name must not be empty");
         }
@@ -668,10 +667,9 @@ impl OsmLayer {
             geometry,
             query: Arc::<str>::from(file.query),
             width_m: file.width_m.max(0.5),
-            priority: implicit_priority,
             style,
             layer_index,
-            original_order: implicit_priority,
+            original_order,
         })
     }
 
@@ -691,10 +689,6 @@ impl OsmLayer {
         self.width_m
     }
 
-    pub fn priority(&self) -> u32 {
-        self.priority
-    }
-
     pub fn style(&self) -> &OverlayStyle {
         &self.style
     }
@@ -705,10 +699,6 @@ impl OsmLayer {
 
     pub fn original_order(&self) -> u32 {
         self.original_order
-    }
-
-    pub fn set_priority(&mut self, value: u32) {
-        self.priority = value;
     }
 }
 
@@ -794,9 +784,6 @@ fn reorder_osm_layers(layers: &mut Vec<OsmLayer>) {
             b.original_order(),
         )
     });
-    for (rank, layer) in layers.iter_mut().enumerate() {
-        layer.set_priority(rank as u32);
-    }
 }
 
 fn reorder_wmts_rules(rules: &mut Vec<WmtsColorRule>) {
@@ -808,9 +795,6 @@ fn reorder_wmts_rules(rules: &mut Vec<WmtsColorRule>) {
             b.original_order(),
         )
     });
-    for (rank, rule) in rules.iter_mut().enumerate() {
-        rule.set_priority(rank as u32);
-    }
 }
 
 fn compare_layer_order(
@@ -998,7 +982,6 @@ pub struct WmtsColorRule {
     color: RgbaColor,
     tolerance: u8,
     alpha_threshold: u8,
-    priority: u32,
     style: OverlayStyle,
     layer_index: Option<i32>,
     original_order: u32,
@@ -1016,15 +999,10 @@ impl WmtsColorRule {
             color,
             tolerance,
             alpha_threshold,
-            priority: position,
             style,
             layer_index,
             original_order: position,
         })
-    }
-
-    pub fn priority(&self) -> u32 {
-        self.priority
     }
 
     pub fn style(&self) -> &OverlayStyle {
@@ -1037,10 +1015,6 @@ impl WmtsColorRule {
 
     pub fn original_order(&self) -> u32 {
         self.original_order
-    }
-
-    pub fn set_priority(&mut self, value: u32) {
-        self.priority = value;
     }
 
     pub fn matches(&self, rgba: [u8; 4]) -> bool {

@@ -180,7 +180,7 @@ The generator sends HTTPS requests to the configured Overpass endpoint whenever 
 
 ### Layer ordering
 
-Painting happens in three passes: `biome_layers`, `top_block_layers`, and finally all OSM/WMTS overlays. The overlay pass sorts every OSM layer and WMTS color rule by `layer_index` (highest first). When two entries share the same index—or leave it unset—they keep the order from the configuration array. Because the lowest index is applied last, give the overlays you want on top the smallest numbers (even negatives) and leave background fillers at larger values.
+Painting happens in three passes: `biome_layers`, `top_block_layers`, and finally all OSM/WMTS overlays. During the overlay pass both the OSM layers and WMTS color rules are gathered into a single list and sorted by `layer_index` (highest first). When two entries share the same index—or leave it unset—they keep their JSON order, with every OSM layer evaluated before the WMTS color rules. Because the lowest index is applied last, give the overlays you want on top the smallest numbers (even negatives) and leave background fillers at larger values.
 
 ### WMTS overlays
 
