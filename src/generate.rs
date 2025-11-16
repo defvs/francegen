@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -5,15 +6,18 @@ use anyhow::{Context, Result, anyhow, bail};
 use geo_types::Coord;
 use owo_colors::OwoColorize;
 
-use crate::chunk::write_regions;
+use crate::chunk::{write_regions, ChunkHeights};
 use crate::cli::GenerateConfig;
 use crate::config::TerrainConfig;
-use crate::constants::{BEDROCK_Y, MAX_WORLD_Y};
+use crate::constants::{BEDROCK_Y, MAX_WORLD_Y, SECTION_SIDE};
 use crate::metadata::write_metadata;
 use crate::osm::apply_osm_overlays;
 use crate::progress::progress_bar;
 use crate::wmts::{WmtsCacheDir, apply_wmts_overlays};
 use crate::world::{WorldBuilder, WorldStats};
+use crate::world_template::{apply_world_template, SpawnSettings};
+
+const DEFAULT_SPAWN_Y: i32 = (MAX_WORLD_Y + BEDROCK_Y) / 2;
 
 pub fn run_generate(config: &GenerateConfig) -> Result<()> {
     let input = &config.input;
@@ -175,13 +179,45 @@ pub fn run_generate(config: &GenerateConfig) -> Result<()> {
         chunks_written: write_stats.chunks_written,
     });
 
-    if let (Some(stats), Some(origin)) = (stats, origin) {
-        let path = write_metadata(output, origin, &stats)?;
+    if let (Some(stats), Some(origin)) = (stats.as_ref(), origin) {
+        let path = write_metadata(output, origin, stats)?;
         println!("{} Saved metadata: {}", "ℹ".blue().bold(), path.display());
     }
 
     if let Some(cache) = wmts_cache.as_ref() {
         cache.cleanup()?;
+    }
+
+    if let Some(stats) = stats.as_ref() {
+        let spawn_x = stats.center_x.round() as i32;
+        let spawn_z = stats.center_z.round() as i32;
+        let spawn_y = column_height_at(&chunks, spawn_x, spawn_z).unwrap_or(DEFAULT_SPAWN_Y);
+        let world_name = output
+            .file_name()
+            .and_then(|value| value.to_str())
+            .map(|value| value.to_string())
+            .unwrap_or_else(|| "francegen_world".to_string());
+        let spawn_settings = SpawnSettings {
+            spawn_x,
+            spawn_y,
+            spawn_z,
+            level_name: &world_name,
+        };
+        match apply_world_template(output, &spawn_settings) {
+            Ok(()) => println!(
+                "{} Installed template level.dat + datapacks",
+                "ℹ".blue().bold()
+            ),
+            Err(err) => println!(
+                "{} Failed to install template world files: {err:#}",
+                "⚠".yellow().bold()
+            ),
+        }
+    } else {
+        println!(
+            "{} Skipping level.dat/datapacks installation because world stats are unavailable",
+            "⚠".yellow().bold()
+        );
     }
 
     Ok(())
@@ -314,4 +350,18 @@ fn print_summary(summary: Summary<'_>) {
         "Chunks written".yellow().bold(),
         summary.chunks_written
     );
+}
+
+fn column_height_at(
+    chunks: &HashMap<(i32, i32), ChunkHeights>,
+    world_x: i32,
+    world_z: i32,
+) -> Option<i32> {
+    let section_side = SECTION_SIDE as i32;
+    let chunk_x = world_x.div_euclid(section_side);
+    let chunk_z = world_z.div_euclid(section_side);
+    let chunk = chunks.get(&(chunk_x, chunk_z))?;
+    let local_x = world_x.rem_euclid(section_side) as usize;
+    let local_z = world_z.rem_euclid(section_side) as usize;
+    chunk.column(local_x, local_z)
 }

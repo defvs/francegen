@@ -12,6 +12,7 @@ mod osm;
 mod progress;
 mod wmts;
 mod world;
+mod world_template;
 
 use anyhow::{Result, anyhow};
 use bounds::run_bounds;

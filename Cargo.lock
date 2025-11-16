@@ -397,6 +397,7 @@ dependencies = [
  "anyhow",
  "fastanvil",
  "fastnbt",
+ "flate2",
  "geo",
  "geo-types",
  "image 0.25.8",
