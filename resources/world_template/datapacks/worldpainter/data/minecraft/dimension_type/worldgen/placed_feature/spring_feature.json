@@ -1,0 +1,9 @@
+{
+  "feature": "minecraft:spring_feature",
+  "placement": [
+    {
+      "type": "minecraft:count",
+      "count": 0
+    }
+  ]
+}
