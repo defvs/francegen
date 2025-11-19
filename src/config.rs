@@ -538,6 +538,10 @@ fn default_line_width_m() -> f64 {
     3.0
 }
 
+fn default_line_width_source() -> AttributeSourceFile {
+    AttributeSourceFile::Fixed(default_line_width_m())
+}
+
 fn default_wmts_enabled() -> bool {
     false
 }
@@ -572,8 +576,8 @@ struct OsmLayerFile {
     #[serde(default)]
     geometry: OsmGeometryFile,
     query: String,
-    #[serde(default = "default_line_width_m")]
-    width_m: f64,
+    #[serde(default = "default_line_width_source")]
+    width_m: AttributeSourceFile,
     #[serde(default)]
     priority: Option<u32>,
     #[serde(default)]
@@ -602,6 +606,199 @@ struct OverlayStyleFile {
     surface_block: Option<String>,
     subsurface_block: Option<String>,
     top_thickness: Option<u32>,
+    #[serde(default)]
+    extrusion: Option<ExtrusionStyleFile>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+enum AttributeSourceFile {
+    Fixed(f64),
+    Dynamic(AttributeSourceObjectFile),
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct AttributeSourceObjectFile {
+    default: Option<f64>,
+    #[serde(default)]
+    min: Option<f64>,
+    #[serde(default)]
+    max: Option<f64>,
+    #[serde(default)]
+    sources: Vec<AttributeKeySourceFile>,
+    #[serde(default)]
+    key: Option<String>,
+    #[serde(default)]
+    multiplier: Option<f64>,
+}
+
+#[derive(Debug, Deserialize)]
+struct AttributeKeySourceFile {
+    key: String,
+    #[serde(default = "default_attribute_multiplier")]
+    multiplier: f64,
+}
+
+fn default_attribute_multiplier() -> f64 {
+    1.0
+}
+
+#[derive(Debug, Clone)]
+pub struct AttributeSource {
+    default_value: f64,
+    min: Option<f64>,
+    max: Option<f64>,
+    sources: Vec<AttributeKeySource>,
+}
+
+#[derive(Debug, Clone)]
+pub struct AttributeKeySource {
+    key: Arc<str>,
+    multiplier: f64,
+}
+
+impl AttributeSource {
+    fn from_file(file: AttributeSourceFile, context: &str, absolute_min: f64) -> Result<Self> {
+        match file {
+            AttributeSourceFile::Fixed(value) => {
+                validate_number(value, context)?;
+                if value < absolute_min {
+                    bail!("{context} must be at least {absolute_min}");
+                }
+                Ok(Self {
+                    default_value: value,
+                    min: None,
+                    max: None,
+                    sources: Vec::new(),
+                })
+            }
+            AttributeSourceFile::Dynamic(config) => {
+                let default_value = config.default.ok_or_else(|| {
+                    anyhow!("{context}.default must be provided when using an object")
+                })?;
+                validate_number(default_value, &format!("{context}.default"))?;
+                if default_value < absolute_min {
+                    bail!("{context}.default must be at least {absolute_min}");
+                }
+                let min = match config.min {
+                    Some(value) => {
+                        validate_number(value, &format!("{context}.min"))?;
+                        if value < absolute_min {
+                            bail!("{context}.min must be at least {absolute_min}");
+                        }
+                        Some(value)
+                    }
+                    None => None,
+                };
+                let max = match config.max {
+                    Some(value) => {
+                        validate_number(value, &format!("{context}.max"))?;
+                        if value < absolute_min {
+                            bail!("{context}.max must be at least {absolute_min}");
+                        }
+                        Some(value)
+                    }
+                    None => None,
+                };
+                if let (Some(min_value), Some(max_value)) = (min, max) {
+                    if min_value > max_value {
+                        bail!("{context}.min must be less than or equal to {context}.max");
+                    }
+                }
+                let mut entries = Vec::with_capacity(config.sources.len() + 1);
+                if let Some(key) = config.key {
+                    let multiplier = config
+                        .multiplier
+                        .unwrap_or_else(default_attribute_multiplier);
+                    entries.push(AttributeKeySourceFile { key, multiplier });
+                }
+                entries.extend(config.sources);
+                let sources = entries
+                    .into_iter()
+                    .enumerate()
+                    .map(|(idx, entry)| {
+                        AttributeKeySource::from_file(entry, &format!("{context}.sources[{idx}]"))
+                    })
+                    .collect::<Result<Vec<_>>>()?;
+                Ok(Self {
+                    default_value,
+                    min,
+                    max,
+                    sources,
+                })
+            }
+        }
+    }
+
+    pub fn default_value(&self) -> f64 {
+        self.default_value
+    }
+
+    pub fn sources(&self) -> &[AttributeKeySource] {
+        &self.sources
+    }
+
+    pub fn clamp(&self, value: f64) -> f64 {
+        let mut result = value;
+        if let Some(min) = self.min {
+            result = result.max(min);
+        }
+        if let Some(max) = self.max {
+            result = result.min(max);
+        }
+        result
+    }
+}
+
+impl AttributeKeySource {
+    fn from_file(file: AttributeKeySourceFile, context: &str) -> Result<Self> {
+        if file.key.trim().is_empty() {
+            bail!("{context}.key must not be empty");
+        }
+        validate_number(file.multiplier, &format!("{context}.multiplier"))?;
+        Ok(Self {
+            key: Arc::<str>::from(file.key),
+            multiplier: file.multiplier,
+        })
+    }
+
+    pub fn key(&self) -> &Arc<str> {
+        &self.key
+    }
+
+    pub fn multiplier(&self) -> f64 {
+        self.multiplier
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct ExtrusionStyleFile {
+    #[serde(rename = "height_m")]
+    height: AttributeSourceFile,
+    #[serde(default)]
+    block: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct ExtrusionStyle {
+    height: AttributeSource,
+    block: Option<Arc<str>>,
+}
+
+impl ExtrusionStyle {
+    fn from_file(file: ExtrusionStyleFile, context: &str) -> Result<Self> {
+        let height = AttributeSource::from_file(file.height, &format!("{context}.height_m"), 0.0)?;
+        let block = normalize_style_name(file.block, &format!("{context}.block"))?;
+        Ok(Self { height, block })
+    }
+
+    pub fn height(&self) -> &AttributeSource {
+        &self.height
+    }
+
+    pub fn block(&self) -> Option<&Arc<str>> {
+        self.block.as_ref()
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -652,7 +849,7 @@ pub struct OsmLayer {
     name: Arc<str>,
     geometry: OsmGeometry,
     query: Arc<str>,
-    width_m: f64,
+    width: AttributeSource,
     style: OverlayStyle,
     layer_index: Option<i32>,
     original_order: u32,
@@ -670,16 +867,14 @@ impl OsmLayer {
             OsmGeometryFile::Line => OsmGeometry::Line,
             OsmGeometryFile::Polygon => OsmGeometry::Polygon,
         };
-        if matches!(geometry, OsmGeometry::Line) && file.width_m <= 0.0 {
-            bail!("line layers must define width_m > 0");
-        }
+        let width = AttributeSource::from_file(file.width_m, "osm.layers[].width_m", 0.5)?;
         let style = OverlayStyle::from_file(file.style, "osm.layers[].style")?;
         let layer_index = file.layer_index.or(file.priority.map(|value| value as i32));
         Ok(Self {
             name: Arc::<str>::from(file.name),
             geometry,
             query: Arc::<str>::from(file.query),
-            width_m: file.width_m.max(0.5),
+            width,
             style,
             layer_index,
             original_order,
@@ -698,8 +893,8 @@ impl OsmLayer {
         &self.query
     }
 
-    pub fn width_m(&self) -> f64 {
-        self.width_m
+    pub fn width(&self) -> &AttributeSource {
+        &self.width
     }
 
     pub fn style(&self) -> &OverlayStyle {
@@ -727,6 +922,7 @@ pub struct OverlayStyle {
     surface_block: Option<Arc<str>>,
     subsurface_block: Option<Arc<str>>,
     top_thickness: Option<u32>,
+    extrusion: Option<ExtrusionStyle>,
 }
 
 impl OverlayStyle {
@@ -735,9 +931,10 @@ impl OverlayStyle {
             && file.surface_block.is_none()
             && file.subsurface_block.is_none()
             && file.top_thickness.is_none()
+            && file.extrusion.is_none()
         {
             bail!(
-                "{context} must set at least one of biome, surface_block, subsurface_block, or top_thickness"
+                "{context} must set at least one of biome, surface_block, subsurface_block, top_thickness, or extrusion"
             );
         }
         if let Some(thickness) = file.top_thickness {
@@ -745,6 +942,13 @@ impl OverlayStyle {
                 bail!("{context}.top_thickness must be greater than 0 when provided");
             }
         }
+        let extrusion = match file.extrusion {
+            Some(extrusion) => Some(ExtrusionStyle::from_file(
+                extrusion,
+                &format!("{context}.extrusion"),
+            )?),
+            None => None,
+        };
         Ok(Self {
             biome: normalize_style_name(file.biome, &format!("{context}.biome"))?,
             surface_block: normalize_style_name(
@@ -756,6 +960,7 @@ impl OverlayStyle {
                 &format!("{context}.subsurface_block"),
             )?,
             top_thickness: file.top_thickness,
+            extrusion,
         })
     }
 
@@ -774,6 +979,10 @@ impl OverlayStyle {
     pub fn top_thickness(&self) -> Option<u32> {
         self.top_thickness
     }
+
+    pub fn extrusion(&self) -> Option<&ExtrusionStyle> {
+        self.extrusion.as_ref()
+    }
 }
 
 fn normalize_style_name(value: Option<String>, field: &str) -> Result<Option<Arc<str>>> {
@@ -786,6 +995,13 @@ fn normalize_style_name(value: Option<String>, field: &str) -> Result<Option<Arc
         }
         None => Ok(None),
     }
+}
+
+fn validate_number(value: f64, field: &str) -> Result<()> {
+    if !value.is_finite() {
+        bail!("{field} must be a finite number");
+    }
+    Ok(())
 }
 
 fn reorder_osm_layers(layers: &mut Vec<OsmLayer>) {

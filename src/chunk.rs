@@ -30,6 +30,8 @@ pub struct ColumnOverlay {
     surface_block: Option<Arc<str>>,
     subsurface_block: Option<Arc<str>>,
     top_thickness: Option<u32>,
+    structure_block: Option<Arc<str>>,
+    structure_height: Option<u32>,
 }
 
 impl ColumnOverlay {
@@ -40,6 +42,8 @@ impl ColumnOverlay {
         surface_block: Option<Arc<str>>,
         subsurface_block: Option<Arc<str>>,
         top_thickness: Option<u32>,
+        structure_block: Option<Arc<str>>,
+        structure_height: Option<u32>,
     ) -> Self {
         Self {
             layer_index,
@@ -48,6 +52,8 @@ impl ColumnOverlay {
             surface_block,
             subsurface_block,
             top_thickness,
+            structure_block,
+            structure_height,
         }
     }
 
@@ -73,6 +79,14 @@ impl ColumnOverlay {
 
     pub fn top_thickness_override(&self) -> Option<u32> {
         self.top_thickness
+    }
+
+    pub fn structure_block_override(&self) -> Option<Arc<str>> {
+        self.structure_block.as_ref().map(Arc::clone)
+    }
+
+    pub fn structure_height_override(&self) -> Option<u32> {
+        self.structure_height
     }
 }
 
@@ -148,7 +162,19 @@ impl ChunkHeights {
     }
 
     pub fn max_height(&self) -> Option<i32> {
-        self.heights.iter().copied().flatten().max()
+        let mut max_height: Option<i32> = None;
+        for idx in 0..self.heights.len() {
+            let Some(surface) = self.heights[idx] else {
+                continue;
+            };
+            let overlay = self.overlays[idx].as_ref();
+            let top = extended_column_height(surface, overlay);
+            max_height = Some(match max_height {
+                Some(current) => current.max(top),
+                None => top,
+            });
+        }
+        max_height
     }
 
     pub fn apply_overlay(&mut self, x: usize, z: usize, overlay: ColumnOverlay) {
@@ -164,6 +190,22 @@ impl ChunkHeights {
 
     pub fn overlay(&self, x: usize, z: usize) -> Option<&ColumnOverlay> {
         self.overlays[z * SECTION_SIDE + x].as_ref()
+    }
+
+    pub fn column_top_height(&self, x: usize, z: usize) -> Option<i32> {
+        let idx = z * SECTION_SIDE + x;
+        let surface = self.heights[idx]?;
+        Some(extended_column_height(surface, self.overlays[idx].as_ref()))
+    }
+}
+
+fn extended_column_height(surface: i32, overlay: Option<&ColumnOverlay>) -> i32 {
+    match overlay.and_then(|o| o.structure_height_override()) {
+        Some(extra) if extra > 0 => {
+            let top = surface as i64 + extra as i64;
+            top.clamp(i32::MIN as i64, i32::MAX as i64) as i32
+        }
+        _ => surface,
     }
 }
 
@@ -451,6 +493,11 @@ fn build_sections(
                 .and_then(|o| o.top_thickness_override())
                 .unwrap_or(top_thickness)
                 .max(1);
+            let structure_block = overlay.as_ref().and_then(|o| o.structure_block_override());
+            let structure_height = overlay
+                .as_ref()
+                .and_then(|o| o.structure_height_override())
+                .unwrap_or(0);
             let biome_min_y = height.map(|surface| {
                 let min_y = surface as i64 - column_top_thickness as i64 + 1;
                 min_y.clamp(i32::MIN as i64, i32::MAX as i64) as i32
@@ -464,6 +511,8 @@ fn build_sections(
                 top_thickness: column_top_thickness,
                 bottom_block_override: overlay.as_ref().and_then(|o| o.subsurface_block_override()),
                 biome_min_y,
+                structure_block,
+                structure_height,
             });
         }
     }
@@ -494,7 +543,7 @@ fn build_heightmaps(columns: &ChunkHeights) -> HeightmapsNbt {
     let mut heights = Vec::with_capacity(SECTION_SIDE * SECTION_SIDE);
     for z in 0..SECTION_SIDE {
         for x in 0..SECTION_SIDE {
-            let column_height = columns.column(x, z).unwrap_or(BEDROCK_Y);
+            let column_height = columns.column_top_height(x, z).unwrap_or(BEDROCK_Y);
             let relative = (column_height - BEDROCK_Y + 1).max(0) as u64;
             heights.push(relative);
         }
@@ -562,6 +611,8 @@ struct ColumnSettings {
     top_thickness: u32,
     bottom_block_override: Option<Arc<str>>,
     biome_min_y: Option<i32>,
+    structure_block: Option<Arc<str>>,
+    structure_height: u32,
 }
 
 impl ColumnSettings {
@@ -589,8 +640,17 @@ fn block_for(world_y: i32, column: &ColumnSettings, default_bottom_block: &Arc<s
     let Some(surface) = column.height else {
         return BlockId::Air;
     };
-    if world_y > surface {
+    let structure_top = if column.structure_height > 0 {
+        surface.saturating_add(column.structure_height.min(i32::MAX as u32) as i32)
+    } else {
+        surface
+    };
+    if world_y > structure_top {
         return BlockId::Air;
+    }
+    if world_y > surface {
+        let block = column.structure_block.as_ref().unwrap_or(&column.top_block);
+        return BlockId::Named(Arc::clone(block));
     }
     let top_thickness_i32 = column.top_thickness.max(1).min(i32::MAX as u32) as i32;
     let depth = surface - world_y;

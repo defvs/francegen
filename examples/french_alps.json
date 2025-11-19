@@ -35,7 +35,14 @@
       {
         "name": "waterways",
         "geometry": "line",
-        "width_m": 4.0,
+        "width_m": {
+          "default": 4.0,
+          "min": 2.0,
+          "max": 18.0,
+          "sources": [
+            { "key": "width" }
+          ]
+        },
         "layer_index": 0,
         "query": "(way[\"waterway\"~\"^(river|stream)$\"]({{bbox}}););",
         "style": {
@@ -69,7 +76,15 @@
       {
         "name": "paved_roads",
         "geometry": "line",
-        "width_m": 5.0,
+        "width_m": {
+          "default": 5.0,
+          "min": 3.0,
+          "max": 16.0,
+          "sources": [
+            { "key": "width" },
+            { "key": "lanes", "multiplier": 3.5 }
+          ]
+        },
         "layer_index": -5,
         "query": "(way[\"highway\"~\"^(motorway|trunk|primary|secondary|tertiary|residential|unclassified|service)$\"]({{bbox}}););",
         "style": {
@@ -85,7 +100,18 @@
         "style": {
           "surface_block": "minecraft:spruce_planks",
           "top_thickness": 4,
-          "subsurface_block": "minecraft:stone"
+          "subsurface_block": "minecraft:stone",
+          "extrusion": {
+            "height_m": {
+              "default": 7.0,
+              "min": 4.0,
+              "max": 40.0,
+              "sources": [
+                { "key": "height" },
+                { "key": "building:levels", "multiplier": 3.0 }
+              ]
+            }
+          }
         }
       }
     ]

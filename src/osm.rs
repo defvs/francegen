@@ -19,7 +19,7 @@ use reqwest::blocking::Client;
 use serde::Deserialize;
 
 use crate::chunk::{ChunkHeights, ColumnOverlay};
-use crate::config::{OsmConfig, OsmGeometry, OsmLayer};
+use crate::config::{AttributeSource, OsmConfig, OsmGeometry, OsmLayer, OverlayStyle};
 use crate::constants::SECTION_SIDE;
 use crate::geo_utils::{CoordinateTransformer, WorldBoundingBox};
 use crate::world::WorldStats;
@@ -209,17 +209,6 @@ fn rasterize_layer(
 ) -> Result<usize> {
     let layer_index = layer.layer_index().unwrap_or(0);
     let order = order_offset.saturating_add(layer.original_order());
-    let overlay = ColumnOverlay::new(
-        layer_index,
-        order,
-        layer.style().biome().map(|value| Arc::clone(value)),
-        layer.style().surface_block().map(|value| Arc::clone(value)),
-        layer
-            .style()
-            .subsurface_block()
-            .map(|value| Arc::clone(value)),
-        layer.style().top_thickness(),
-    );
 
     let mut painted = 0usize;
     for element in elements {
@@ -234,10 +223,17 @@ fn rasterize_layer(
             let world_z = (origin.y - y).round() as i32;
             path.push((world_x, world_z));
         }
+        let tags = if element.tags.is_empty() {
+            None
+        } else {
+            Some(&element.tags)
+        };
+        let overlay = build_column_overlay(layer, layer_index, order, tags);
 
         match layer.geometry() {
             OsmGeometry::Line => {
-                painted += rasterize_line(&path, layer.width_m(), &overlay, chunks);
+                let width = resolve_line_width(layer.width(), tags);
+                painted += rasterize_line(&path, width, &overlay, chunks);
             }
             OsmGeometry::Polygon => {
                 painted += rasterize_polygon(&path, &overlay, chunks);
@@ -358,12 +354,94 @@ struct OverpassResponse {
 struct OverpassElement {
     #[serde(default)]
     geometry: Option<Vec<OverpassPoint>>,
+    #[serde(default)]
+    tags: HashMap<String, String>,
 }
 
 #[derive(Debug, Deserialize)]
 struct OverpassPoint {
     lat: f64,
     lon: f64,
+}
+
+fn resolve_line_width(source: &AttributeSource, tags: Option<&HashMap<String, String>>) -> f64 {
+    resolve_attribute(source, tags).max(0.5)
+}
+
+fn build_column_overlay(
+    layer: &OsmLayer,
+    layer_index: i32,
+    order: u32,
+    tags: Option<&HashMap<String, String>>,
+) -> ColumnOverlay {
+    let style = layer.style();
+    let (structure_block, structure_height) = resolve_structure(style, tags);
+    ColumnOverlay::new(
+        layer_index,
+        order,
+        style.biome().map(|value| Arc::clone(value)),
+        style.surface_block().map(|value| Arc::clone(value)),
+        style.subsurface_block().map(|value| Arc::clone(value)),
+        style.top_thickness(),
+        structure_block,
+        structure_height,
+    )
+}
+
+fn resolve_structure(
+    style: &OverlayStyle,
+    tags: Option<&HashMap<String, String>>,
+) -> (Option<Arc<str>>, Option<u32>) {
+    let Some(extrusion) = style.extrusion() else {
+        return (None, None);
+    };
+    let height_value = resolve_attribute(extrusion.height(), tags);
+    if height_value <= 0.0 {
+        return (None, None);
+    }
+    let capped = height_value.clamp(0.0, i32::MAX as f64);
+    if capped < 0.5 {
+        return (None, None);
+    }
+    let block = extrusion
+        .block()
+        .map(|value| Arc::clone(value))
+        .or_else(|| style.surface_block().map(|value| Arc::clone(value)));
+    let Some(block) = block else {
+        return (None, None);
+    };
+    let height_blocks = capped.round().max(1.0).min(i32::MAX as f64) as u32;
+    (Some(block), Some(height_blocks))
+}
+
+fn resolve_attribute(source: &AttributeSource, tags: Option<&HashMap<String, String>>) -> f64 {
+    if let Some(tags) = tags {
+        for entry in source.sources() {
+            if let Some(raw) = tags.get(entry.key().as_ref()) {
+                if let Some(parsed) = parse_numeric_tag(raw) {
+                    let value = parsed * entry.multiplier();
+                    return source.clamp(value);
+                }
+            }
+        }
+    }
+    source.default_value()
+}
+
+fn parse_numeric_tag(raw: &str) -> Option<f64> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let normalized = trimmed.replace(',', ".");
+    let mut token = normalized.split_whitespace().next().unwrap_or("");
+    token = token.trim_start_matches(|c: char| c == '~' || c == '≈');
+    token = token.trim_matches('"');
+    token = token.trim_end_matches(|c: char| c.is_ascii_alphabetic() || c == '\'' || c == '"');
+    if token.is_empty() {
+        return None;
+    }
+    token.parse::<f64>().ok()
 }
 
 fn trim_preview(body: &str) -> String {

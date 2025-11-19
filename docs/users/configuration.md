@@ -96,9 +96,36 @@ Key fields:
 - `bbox_margin_m` expands the DEM-derived bounding box before querying Overpass. Increase this when you want roads that slightly overshoot the clipped DEM area.
 - `layers` describes how to query and render each feature class. Layers later in the list override earlier ones when they overlap.
   - `geometry`: `"line"` (buffered with `width_m`, measured in meters/blocks) or `"polygon"` (filled area).
+    - `width_m` accepts either a fixed number (legacy behavior) or an object with `default`, optional `min`/`max`, and a `sources` array such as `[{ "key": "width" }, { "key": "lanes", "multiplier": 3.5 }]`. When present, the first matching tag value (converted to meters) overrides the default so highways, rivers, or ski pistes can inherit their real-world widths straight from OSM.
   - `query`: raw OverpassQL inserted between the global `[out:json]…;…;out geom;` wrapper. Use `{{bbox}}` as a placeholder for the lat/lon bounding box.
-  - `style`: at least one of `surface_block`, `subsurface_block`, `top_thickness`, or `biome`. `surface_block` replaces the exposed material, `subsurface_block` controls what fills beneath it, `top_thickness` overrides how many blocks receive the surface material, and `biome` swaps the biome palette.
+  - `style`: at least one of `surface_block`, `subsurface_block`, `top_thickness`, `biome`, or an `extrusion` block. `surface_block` replaces the exposed material, `subsurface_block` controls what fills beneath it, `top_thickness` overrides how many blocks receive the surface material, and `biome` swaps the biome palette. `extrusion` lets polygon layers (like buildings) specify a vertical height via the same dynamic source syntax as `width_m`, plus an optional `block` override; francegen extrudes that many blocks above the surface using either the extrusion block or the surface block.
   - `layer_index` (optional): controls when the layer is applied relative to other OSM/WMTS overlays. Higher values paint earlier, while lower values paint later (and therefore win). When omitted the layer behaves as if `layer_index = 0`, and ties fall back to the order in the JSON array.
+
+```json
+{
+  "width_m": {
+    "default": 5.0,
+    "min": 3.0,
+    "max": 18.0,
+    "sources": [
+      { "key": "width" },
+      { "key": "lanes", "multiplier": 3.5 }
+    ]
+  },
+  "style": {
+    "surface_block": "minecraft:spruce_planks",
+    "extrusion": {
+      "height_m": {
+        "default": 8.0,
+        "sources": [
+          { "key": "height" },
+          { "key": "building:levels", "multiplier": 3.0 }
+        ]
+      }
+    }
+  }
+}
+```
 
 The generator sends HTTPS requests to the configured Overpass endpoint whenever an `osm` block is present, so make sure outbound network access is available or point `overpass_url` to a local mirror. Pass `--cache-dir <path>` to persist the JSON responses inside `<path>/overpass/` and reuse them between runs instead of re-querying the API.
 
