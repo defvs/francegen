@@ -1,3 +1,9 @@
+![francegen logo](docs/images/puydedome.png)
+*Puy de Dôme, France*
+
+![francegen terrain](docs/images/venosc.gif)
+*Venosc, Isère*
+
 # francegen
 
 Generate Minecraft Java Edition worlds from GeoTIFF heightmaps – one block per metre – and keep origin metadata so you can line real-world coordinates back up later.
