@@ -7,6 +7,7 @@ use geo_types::Coord;
 use owo_colors::OwoColorize;
 
 use crate::chunk::{ChunkHeights, write_regions};
+use crate::chunky::print_chunky_reminder;
 use crate::cli::GenerateConfig;
 use crate::config::TerrainConfig;
 use crate::constants::{BEDROCK_Y, MAX_WORLD_Y, SECTION_SIDE};
@@ -213,6 +214,8 @@ pub fn run_generate(config: &GenerateConfig) -> Result<()> {
                 "⚠".yellow().bold()
             ),
         }
+
+        print_chunky_reminder(stats.min_x, stats.min_z, stats.max_x, stats.max_z);
     } else {
         println!(
             "{} Skipping level.dat/datapacks installation because world stats are unavailable",

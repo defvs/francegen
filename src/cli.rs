@@ -4,12 +4,13 @@ use anyhow::{Result, anyhow, bail};
 
 use crate::world::ModelBounds;
 
-const USAGE: &str = "Usage: francegen [--threads <N>] [--config <file>] [--bounds <min_x,min_z,max_x,max_z>] [--cache-dir <path>] <tif-folder> <output-world>\n       francegen locate <world-dir> <real-x> <real-z> [<real-height>]\n       francegen bounds <tif-folder>";
+const USAGE: &str = "Usage: francegen [--threads <N>] [--config <file>] [--bounds <min_x,min_z,max_x,max_z>] [--cache-dir <path>] <tif-folder> <output-world>\n       francegen locate <world-dir> <real-x> <real-z> [<real-height>]\n       francegen bounds <tif-folder>\n       francegen info <world-dir>";
 
 pub enum Command {
     Generate(GenerateConfig),
     Locate(LocateConfig),
     Bounds(BoundsConfig),
+    Info(InfoConfig),
 }
 
 pub struct GenerateConfig {
@@ -33,6 +34,10 @@ pub struct BoundsConfig {
     pub input: PathBuf,
 }
 
+pub struct InfoConfig {
+    pub world: PathBuf,
+}
+
 pub fn parse_args(args: &[String]) -> Result<Command> {
     if args.is_empty() {
         bail!("No arguments supplied.\n{USAGE}");
@@ -44,6 +49,10 @@ pub fn parse_args(args: &[String]) -> Result<Command> {
 
     if args[0] == "bounds" {
         return parse_bounds_command(&args[1..]).map(Command::Bounds);
+    }
+
+    if args[0] == "info" {
+        return parse_info(&args[1..]).map(Command::Info);
     }
 
     parse_generate(args).map(Command::Generate)
@@ -220,5 +229,20 @@ fn parse_bounds(value: &str) -> Result<ModelBounds> {
         max_x,
         min_z,
         max_z,
+    })
+}
+
+fn parse_info(args: &[String]) -> Result<InfoConfig> {
+    if args.is_empty() || args[0] == "--help" || args[0] == "-h" {
+        println!("{USAGE}");
+        std::process::exit(0);
+    }
+
+    if args.len() != 1 {
+        bail!("info requires exactly one argument: <world-dir>\n{USAGE}");
+    }
+
+    Ok(InfoConfig {
+        world: PathBuf::from(&args[0]),
     })
 }

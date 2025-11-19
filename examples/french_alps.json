@@ -99,7 +99,7 @@
     "tile_matrix": 18,
     "format": "image/png",
     "bbox_margin_m": 150.0,
-    "max_tiles": 4096,
+    "max_tiles": 24000,
     "colors": [
       {
         "name": "snow_or_glacier",
@@ -151,7 +151,7 @@
         "color": "#bbb096",
         "layer_index": 20,
         "style": {
-          "biome": "minecraft:jagged_peaks",
+          "biome": "minecraft:stony_peaks",
           "surface_block": "minecraft:stone"
         }
       },

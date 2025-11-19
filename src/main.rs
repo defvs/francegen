@@ -1,11 +1,13 @@
 mod bounds;
 mod chunk;
+mod chunky;
 mod cli;
 mod config;
 mod constants;
 mod generate;
 mod geo_utils;
 mod georaster;
+mod info;
 mod locate;
 mod metadata;
 mod osm;
@@ -18,6 +20,7 @@ use anyhow::{Result, anyhow};
 use bounds::run_bounds;
 use cli::{Command, parse_args};
 use generate::run_generate;
+use info::run_info;
 use locate::run_locate;
 use rayon::ThreadPoolBuilder;
 
@@ -35,5 +38,6 @@ fn main() -> Result<()> {
         }
         Command::Locate(config) => run_locate(&config),
         Command::Bounds(config) => run_bounds(&config),
+        Command::Info(config) => run_info(&config),
     }
 }
