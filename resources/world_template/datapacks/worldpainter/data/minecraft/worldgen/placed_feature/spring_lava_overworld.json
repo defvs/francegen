@@ -1,5 +1,5 @@
 {
-  "feature": "minecraft:spring_feature",
+  "feature": "minecraft:spring_lava_overworld",
   "placement": [
     {
       "type": "minecraft:count",
