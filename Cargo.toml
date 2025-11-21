@@ -21,3 +21,7 @@ image = { version = "0.25", default-features = false, features = ["png", "jpeg"]
 roxmltree = "0.19"
 urlencoding = "2.1"
 flate2 = "1"
+copc-rs = "0.5.0"
+
+[patch.crates-io]
+copc-rs = { path = "vendor/copc-rs" }
