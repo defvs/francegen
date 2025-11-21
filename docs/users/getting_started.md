@@ -6,6 +6,7 @@ This guide walks through installing francegen, running the CLI, and understandin
 
 - Rust toolchain (for `cargo run`, `cargo build`, or `cargo install`)
 - Input GeoTIFFs that share the same projected coordinate system (e.g., LAMB93)
+- Optional: LiDAR COPC/LAZ tiles for higher-fidelity buildings. IGN publishes them at https://cartes.gouv.fr/telechargement/IGNF_NUAGES-DE-POINTS-LIDAR-HD (same CRS as their DEMs).
 
 ## Core commands
 
