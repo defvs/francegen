@@ -1,0 +1,213 @@
+{
+  "top_layer_block": "minecraft:grass_block",
+  "top_layer_thickness": 6,
+  "bottom_layer_block": "minecraft:stone",
+  "base_biome": "minecraft:plains",
+  "generate_features": true,
+  "empty_chunk_radius": 32,
+  "cliff_generation": {
+    "enabled": true,
+    "angle_threshold_degrees": 55.0,
+    "block": "minecraft:stone",
+    "smoothing_radius": 2,
+    "smoothing_factor": 0.35
+  },
+  "biome_layers": [
+    { "range": { "min": "3300m" },                 "biome": "minecraft:frozen_peaks" },
+    { "range": { "min": "2500m", "max": "3300m" }, "biome": "minecraft:snowy_slopes" },
+    { "range": { "min": "1800m", "max": "2500m" }, "biome": "minecraft:stony_peaks" },
+    { "range": { "min": "1200m", "max": "1800m" }, "biome": "minecraft:windswept_hills" },
+    { "range": { "min": "800m",  "max": "1200m" }, "biome": "minecraft:taiga" },
+    { "range": { "min": "200m",  "max": "800m" },  "biome": "minecraft:forest" },
+    { "range": { "min": "50m",   "max": "200m" },  "biome": "minecraft:birch_forest" },
+    { "range": { "max": "5m" },                    "biome": "minecraft:beach" }
+  ],
+  "top_block_layers": [
+    { "range": { "min": "3300m" },                 "block": "minecraft:packed_ice" },
+    { "range": { "min": "2500m", "max": "3300m" }, "block": "minecraft:snow_block" },
+    { "range": { "min": "1800m", "max": "2500m" }, "block": "minecraft:stone" },
+    { "range": { "max": "8m" },                    "block": "minecraft:sand" }
+  ],
+  "osm": {
+    "enabled": true,
+    "bbox_margin_m": 500.0,
+    "layers": [
+      {
+        "name": "waterways",
+        "geometry": "line",
+        "width_m": {
+          "default": 4.0,
+          "min": 2.0,
+          "max": 18.0,
+          "sources": [
+            { "key": "width" }
+          ]
+        },
+        "layer_index": 0,
+        "query": "(way[\"waterway\"~\"^(river|stream)$\"]({{bbox}}););",
+        "style": {
+          "surface_block": "minecraft:water",
+          "top_thickness": 4,
+          "subsurface_block": "minecraft:dirt"
+        }
+      },
+      {
+        "name": "water_polygons",
+        "geometry": "polygon",
+        "layer_index": 0,
+        "query": "(way[\"natural\"=\"water\"]({{bbox}});relation[\"natural\"=\"water\"]({{bbox}}););",
+        "style": {
+          "surface_block": "minecraft:water",
+          "top_thickness": 5,
+          "subsurface_block": "minecraft:clay"
+        }
+      },
+      {
+        "name": "trails_and_tracks",
+        "geometry": "line",
+        "width_m": 1.0,
+        "layer_index": 10,
+        "query": "(way[\"highway\"~\"^(track|path)$\"]({{bbox}}););",
+        "style": {
+          "surface_block": "minecraft:coarse_dirt",
+          "top_thickness": 1
+        }
+      },
+      {
+        "name": "steps",
+        "geometry": "line",
+        "width_m": 1.0,
+        "layer_index": 11,
+        "query": "(way[\"highway\"=\"steps\"]({{bbox}}););",
+        "style": {
+          "surface_block": "minecraft:stone_bricks",
+          "top_thickness": 1
+        }
+      },
+      {
+        "name": "paved_roads",
+        "geometry": "line",
+        "width_m": {
+          "default": 5.0,
+          "min": 3.0,
+          "max": 16.0,
+          "sources": [
+            { "key": "width" },
+            { "key": "lanes", "multiplier": 3.5 }
+          ]
+        },
+        "layer_index": -5,
+        "query": "(way[\"highway\"~\"^(motorway|trunk|primary|secondary|tertiary|residential|unclassified|service)$\"]({{bbox}}););",
+        "style": {
+          "surface_block": "minecraft:black_concrete",
+          "top_thickness": 1
+        }
+      },
+      {
+        "name": "buildings",
+        "geometry": "polygon",
+        "layer_index": -10,
+        "query": "(way[\"building\"]({{bbox}});relation[\"building\"]({{bbox}}););",
+        "style": {
+          "surface_block": "minecraft:spruce_planks",
+          "top_thickness": 1,
+          "subsurface_block": "minecraft:stone"
+        }
+      }
+    ]
+  },
+  "wmts": {
+    "enabled": true,
+    "capabilities_url": "https://data.geopf.fr/wmts?REQUEST=GetCapabilities&service=WMTS",
+    "layer": "IGNF_COSIA_2021-2023",
+    "style_id": "normal",
+    "tile_matrix_set": "PM_6_18",
+    "tile_matrix": 18,
+    "format": "image/png",
+    "bbox_margin_m": 150.0,
+    "max_tiles": 24000,
+    "colors": [
+      {
+        "name": "snow_or_glacier",
+        "color": "#e9effe",
+        "layer_index": 20,
+        "style": {
+          "surface_block": "minecraft:snow_block",
+          "top_thickness": 2
+        }
+      },
+      {
+        "name": "coniferous",
+        "color": "#126421",
+        "layer_index": 20,
+        "style": {
+          "biome": "minecraft:taiga",
+          "surface_block": "minecraft:grass_block"
+        }
+      },
+      {
+        "name": "deciduous",
+        "color": "#4c9129",
+        "layer_index": 20,
+        "style": {
+          "biome": "minecraft:forest",
+          "surface_block": "minecraft:grass_block"
+        }
+      },
+      {
+        "name": "scrub",
+        "color": "#b5c335",
+        "layer_index": 20,
+        "style": {
+          "biome": "minecraft:meadow",
+          "surface_block": "minecraft:grass_block"
+        }
+      },
+      {
+        "name": "grassland",
+        "color": "#8cd76a",
+        "layer_index": 20,
+        "style": {
+          "biome": "minecraft:plains",
+          "surface_block": "minecraft:grass_block"
+        }
+      },
+      {
+        "name": "bare_ground",
+        "color": "#bbb096",
+        "layer_index": 20,
+        "style": {
+          "biome": "minecraft:stony_peaks",
+          "surface_block": "minecraft:stone"
+        }
+      },
+      {
+        "name": "cultivated",
+        "color": "#decf55",
+        "layer_index": 20,
+        "style": {
+          "biome": "minecraft:plains",
+          "surface_block": "minecraft:grass_block"
+        }
+      },
+      {
+        "name": "cultivated_tilled",
+        "color": "#d0a048",
+        "layer_index": 20,
+        "style": {
+          "biome": "minecraft:plains",
+          "surface_block": "minecraft:coarse_dirt"
+        }
+      },
+      {
+        "name": "permeable_gravel",
+        "color": "#987752",
+        "layer_index": 20,
+        "style": {
+          "biome": "minecraft:plains",
+          "surface_block": "minecraft:gravel"
+        }
+      }
+    ]
+  }
+}

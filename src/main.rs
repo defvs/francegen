@@ -4,6 +4,7 @@ mod chunky;
 mod cli;
 mod config;
 mod constants;
+mod copc;
 mod generate;
 mod geo_utils;
 mod georaster;

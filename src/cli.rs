@@ -4,7 +4,7 @@ use anyhow::{Result, anyhow, bail};
 
 use crate::world::ModelBounds;
 
-const USAGE: &str = "Usage: francegen [--threads <N>] [--config <file>] [--bounds <min_x,min_z,max_x,max_z>] [--cache-dir <path>] <tif-folder> <output-world>\n       francegen locate <world-dir> <real-x> <real-z> [<real-height>]\n       francegen bounds <tif-folder>\n       francegen info <world-dir>";
+const USAGE: &str = "Usage: francegen [--threads <N>] [--config <file>] [--bounds <min_x,min_z,max_x,max_z>] [--cache-dir <path>] [--copc-dir <path>] <tif-folder> <output-world>\n       francegen locate <world-dir> <real-x> <real-z> [<real-height>]\n       francegen bounds <tif-folder>\n       francegen info <world-dir>";
 
 pub enum Command {
     Generate(GenerateConfig),
@@ -21,6 +21,7 @@ pub struct GenerateConfig {
     pub terrain_config: Option<PathBuf>,
     pub bounds: Option<ModelBounds>,
     pub cache_dir: Option<PathBuf>,
+    pub copc_dir: Option<PathBuf>,
 }
 
 pub struct LocateConfig {
@@ -66,6 +67,7 @@ fn parse_generate(args: &[String]) -> Result<GenerateConfig> {
     let mut terrain_config = None;
     let mut bounds = None;
     let mut cache_dir = None;
+    let mut copc_dir = None;
 
     let mut i = 0;
     while i < args.len() {
@@ -111,6 +113,14 @@ fn parse_generate(args: &[String]) -> Result<GenerateConfig> {
             cache_dir = Some(PathBuf::from(&args[i]));
         } else if let Some(value) = arg.strip_prefix("--cache-dir=") {
             cache_dir = Some(PathBuf::from(value));
+        } else if arg == "--copc-dir" {
+            i += 1;
+            if i >= args.len() {
+                bail!("Missing value for --copc-dir\n{USAGE}");
+            }
+            copc_dir = Some(PathBuf::from(&args[i]));
+        } else if let Some(value) = arg.strip_prefix("--copc-dir=") {
+            copc_dir = Some(PathBuf::from(value));
         } else if input.is_none() {
             input = Some(PathBuf::from(arg));
         } else if output.is_none() {
@@ -132,6 +142,7 @@ fn parse_generate(args: &[String]) -> Result<GenerateConfig> {
         terrain_config,
         bounds,
         cache_dir,
+        copc_dir,
     })
 }
 
