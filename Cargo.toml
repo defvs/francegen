@@ -1,7 +1,12 @@
 [package]
 name = "francegen"
-version = "0.1.0"
+version = "0.9.0"
 edition = "2024"
+authors = ["Daniel THIRION"]
+description = "Generate 1:1 Minecraft worlds (Java Edition 1.21.10+) from DEM, landuse and OSM data."
+readme = "README.md"
+repository = "https://github.com/defvs/francegen"
+license = "MIT"
 
 [dependencies]
 fastanvil = "0.31.0"
