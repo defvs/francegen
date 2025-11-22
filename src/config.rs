@@ -20,6 +20,7 @@ pub struct TerrainConfig {
     wmts: Option<WmtsConfig>,
     generate_features: bool,
     empty_chunk_radius: u32,
+    copc: Option<CopcConfig>,
 }
 
 impl TerrainConfig {
@@ -107,6 +108,10 @@ impl TerrainConfig {
         self.empty_chunk_radius
     }
 
+    pub fn copc(&self) -> Option<&CopcConfig> {
+        self.copc.as_ref()
+    }
+
     fn from_file(file: TerrainConfigFile) -> Result<Self> {
         if file.top_layer_thickness == 0 {
             bail!("top_layer_thickness must be greater than 0");
@@ -131,6 +136,10 @@ impl TerrainConfig {
             Some(config) => Some(WmtsConfig::from_file(config)?),
             None => None,
         };
+        let copc = match file.copc {
+            Some(config) => Some(CopcConfig::from_file(config)?),
+            None => None,
+        };
         Ok(Self {
             top_layer_block: Arc::<str>::from(file.top_layer_block),
             bottom_layer_block: Arc::<str>::from(file.bottom_layer_block),
@@ -143,6 +152,7 @@ impl TerrainConfig {
             wmts,
             generate_features: file.generate_features,
             empty_chunk_radius: file.empty_chunk_radius,
+            copc,
         })
     }
 }
@@ -161,6 +171,7 @@ impl Default for TerrainConfig {
             wmts: None,
             generate_features: false,
             empty_chunk_radius: default_empty_chunk_radius(),
+            copc: None,
         }
     }
 }
@@ -189,6 +200,8 @@ struct TerrainConfigFile {
     generate_features: bool,
     #[serde(default = "default_empty_chunk_radius")]
     empty_chunk_radius: u32,
+    #[serde(default)]
+    copc: Option<CopcConfigFile>,
 }
 
 fn default_bottom_layer() -> String {
@@ -556,6 +569,123 @@ fn default_wmts_bbox_margin_m() -> f64 {
 
 fn default_wmts_max_tiles() -> u32 {
     2048
+}
+
+fn default_copc_r_xy() -> i32 {
+    1
+}
+
+fn default_copc_h_gap() -> i32 {
+    3
+}
+
+fn default_copc_t_wall() -> i32 {
+    1
+}
+
+fn default_copc_bands() -> usize {
+    4
+}
+
+fn default_copc_tau_persist() -> f32 {
+    0.4
+}
+
+fn default_copc_min_support() -> usize {
+    2
+}
+
+fn default_copc_always_pillar() -> bool {
+    true
+}
+
+#[derive(Debug, Deserialize)]
+struct CopcConfigFile {
+    #[serde(default = "default_copc_r_xy")]
+    r_xy: i32,
+    #[serde(default = "default_copc_h_gap")]
+    h_gap: i32,
+    #[serde(default = "default_copc_t_wall")]
+    t_wall: i32,
+    #[serde(default = "default_copc_bands")]
+    bands: usize,
+    #[serde(default = "default_copc_tau_persist")]
+    tau_persist: f32,
+    #[serde(default = "default_copc_min_support")]
+    min_support: usize,
+    #[serde(default = "default_copc_always_pillar")]
+    always_pillar: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct CopcConfig {
+    r_xy: i32,
+    h_gap: i32,
+    t_wall: i32,
+    bands: usize,
+    tau_persist: f32,
+    min_support: usize,
+    always_pillar: bool,
+}
+
+impl CopcConfig {
+    fn from_file(file: CopcConfigFile) -> Result<Self> {
+        if file.r_xy < 0 {
+            bail!("copc.r_xy must be >= 0");
+        }
+        if file.h_gap < 1 {
+            bail!("copc.h_gap must be >= 1");
+        }
+        if file.t_wall < 1 {
+            bail!("copc.t_wall must be >= 1");
+        }
+        if file.bands == 0 {
+            bail!("copc.bands must be >= 1");
+        }
+        if !(0.0..=1.0).contains(&file.tau_persist) {
+            bail!("copc.tau_persist must be between 0.0 and 1.0");
+        }
+        if file.min_support == 0 {
+            bail!("copc.min_support must be >= 1");
+        }
+        Ok(Self {
+            r_xy: file.r_xy,
+            h_gap: file.h_gap,
+            t_wall: file.t_wall,
+            bands: file.bands,
+            tau_persist: file.tau_persist,
+            min_support: file.min_support,
+            always_pillar: file.always_pillar,
+        })
+    }
+
+    pub fn r_xy(&self) -> i32 {
+        self.r_xy
+    }
+
+    pub fn h_gap(&self) -> i32 {
+        self.h_gap
+    }
+
+    pub fn t_wall(&self) -> i32 {
+        self.t_wall
+    }
+
+    pub fn bands(&self) -> usize {
+        self.bands
+    }
+
+    pub fn tau_persist(&self) -> f32 {
+        self.tau_persist
+    }
+
+    pub fn min_support(&self) -> usize {
+        self.min_support
+    }
+
+    pub fn always_pillar(&self) -> bool {
+        self.always_pillar
+    }
 }
 
 #[derive(Debug, Deserialize)]

@@ -290,6 +290,7 @@ fn prepare_rules(rules: &[WmtsColorRule], order_offset: u32) -> Vec<PreparedRule
                     rule.style().top_thickness(),
                     None,
                     None,
+                    None,
                 ),
             }
         })

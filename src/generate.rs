@@ -11,6 +11,7 @@ use crate::chunky::print_chunky_reminder;
 use crate::cli::GenerateConfig;
 use crate::config::TerrainConfig;
 use crate::constants::{BEDROCK_Y, MAX_WORLD_Y, SECTION_SIDE};
+use crate::copc::apply_copc_buildings;
 use crate::metadata::write_metadata;
 use crate::osm::apply_osm_overlays;
 use crate::progress::progress_bar;
@@ -126,6 +127,23 @@ pub fn run_generate(config: &GenerateConfig) -> Result<()> {
         fs::create_dir_all(path)
             .with_context(|| format!("Failed to create cache dir {}", path.display()))?;
         cache_root = Some(path.clone());
+    }
+
+    if let Some(copc_dir) = config.copc_dir.as_ref() {
+        if let (Some(stats), Some(origin_coord)) = (stats.as_ref(), origin.as_ref()) {
+            apply_copc_buildings(
+                &mut chunks,
+                stats,
+                *origin_coord,
+                copc_dir,
+                terrain_config.copc(),
+            )?;
+        } else {
+            println!(
+                "{} Skipping COPC overlays because world origin metadata is unavailable",
+                "⚠".yellow().bold()
+            );
+        }
     }
 
     if let Some(osm_config) = terrain_config.osm() {

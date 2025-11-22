@@ -57,6 +57,32 @@ Set `cliff_generation.enabled` to `true` to automatically replace the entire top
 
 See [`examples/french_alps.json`](../../examples/french_alps.json) for a full configuration inspired by alpine terrain.
 
+## COPC building interpolation
+
+Add a `copc` block to tune how LiDAR (COPC/LAZ) building points are interpolated into Minecraft blocks:
+
+```json
+"copc": {
+  "r_xy": 1,
+  "h_gap": 3,
+  "t_wall": 1,
+  "bands": 4,
+  "tau_persist": 0.4,
+  "min_support": 2,
+  "always_pillar": true
+}
+```
+
+- `r_xy` (default `1`): XY dilation/erosion radius per slice; higher fills roof/floor holes but can fuse nearby buildings.
+- `h_gap` (default `3`): max vertical gap to bridge between two anchored slices when rebuilding walls.
+- `t_wall` (default `1`): wall thickness along the perimeter (in XY blocks).
+- `bands` (default `4`): number of height bands to build persistent footprints; more bands capture step-backs better.
+- `tau_persist` (default `0.4`): footprint persistence threshold; lower accepts sparser walls, higher ignores flimsy overhangs.
+- `min_support` (default `2`): required occupied neighbours in a 3×3 XY window to bridge a gap.
+- `always_pillar` (default `true`): when `true`, falls back to legacy pillar fill from terrain surface up to the highest COPC hit in each column; set to `false` to use the overhang-preserving `structure_levels` reconstruction (recommended for detailed geometry).
+
+See [`examples/french_alps_copc.json`](../../examples/french_alps_copc.json) for tuned values that favour overhang preservation (`always_pillar: false`).
+
 ## OpenStreetMap overlays
 
 Add an `osm` block to the JSON config to paint additional materials and biomes using live OSM data fetched via the Overpass API. `francegen` automatically requests the data using the DEM bounds (plus an optional margin) and rasterizes the features onto the existing heightmap before writing region files.
