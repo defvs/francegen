@@ -16,7 +16,6 @@ use crate::world::{WorldStats, dem_to_minecraft};
 const COPC_LAYER_INDEX: i32 = -20;
 const COPC_OVERLAY_ORDER: u32 = u32::MAX;
 const DEFAULT_BUILDING_BLOCK: &str = "minecraft:spruce_planks";
-const DEFAULT_BUILDING_SUBSURFACE: &str = "minecraft:stone";
 
 pub fn apply_copc_buildings(
     chunks: &mut HashMap<(i32, i32), ChunkHeights>,
@@ -46,9 +45,10 @@ pub fn apply_copc_buildings(
     );
 
     let bounds = copc_bounds(stats, origin);
-    let mut max_extra_height: HashMap<(i32, i32), u32> = HashMap::new();
+    let mut column_levels: HashMap<(i32, i32), Vec<i32>> = HashMap::new();
     let mut points_seen: usize = 0;
     let mut building_points: usize = 0;
+    let mut usable_points: usize = 0;
 
     for (idx, path) in paths.into_iter().enumerate() {
         let mut reader = CopcReader::from_path(&path)
@@ -102,24 +102,20 @@ pub fn apply_copc_buildings(
             if top_height <= surface {
                 continue;
             }
-            let extra = (top_height - surface) as u32;
-            max_extra_height
+            column_levels
                 .entry((world_x, world_z))
-                .and_modify(|value| {
-                    if extra > *value {
-                        *value = extra;
-                    }
-                })
-                .or_insert(extra);
+                .or_default()
+                .push(top_height);
+            usable_points += 1;
         }
 
         pb.finish_and_clear();
     }
 
     let building_block: Arc<str> = Arc::from(DEFAULT_BUILDING_BLOCK);
-    let subsurface_block: Arc<str> = Arc::from(DEFAULT_BUILDING_SUBSURFACE);
     let mut painted = 0usize;
-    for ((world_x, world_z), extra) in max_extra_height {
+    let mut block_count = 0usize;
+    for ((world_x, world_z), mut levels) in column_levels {
         let chunk_x = world_x.div_euclid(SECTION_SIDE as i32);
         let chunk_z = world_z.div_euclid(SECTION_SIDE as i32);
         let Some(chunk) = chunks.get_mut(&(chunk_x, chunk_z)) else {
@@ -127,28 +123,39 @@ pub fn apply_copc_buildings(
         };
         let local_x = world_x.rem_euclid(SECTION_SIDE as i32) as usize;
         let local_z = world_z.rem_euclid(SECTION_SIDE as i32) as usize;
+        levels.sort_unstable();
+        levels.dedup();
+        if levels.is_empty() {
+            continue;
+        }
+        let level_count = levels.len();
         let overlay = ColumnOverlay::new(
             COPC_LAYER_INDEX,
             COPC_OVERLAY_ORDER,
             None,
+            None,
+            None,
+            None,
             Some(Arc::clone(&building_block)),
-            Some(Arc::clone(&subsurface_block)),
-            Some(1),
-            Some(Arc::clone(&building_block)),
-            Some(extra),
+            None,
+            Some(levels),
         );
         chunk.apply_overlay(local_x, local_z, overlay);
         painted += 1;
+        block_count += level_count;
     }
 
     println!(
-        "  {} Read {} point{} ({} building-classified), applied {} column{}",
+        "  {} Read {} point{} ({} building-classified, {} usable), applied {} column{} with {} block{}",
         "✔".green().bold(),
         points_seen,
         if points_seen == 1 { "" } else { "s" },
         building_points,
+        usable_points,
         painted,
-        if painted == 1 { "" } else { "s" }
+        if painted == 1 { "" } else { "s" },
+        block_count,
+        if block_count == 1 { "" } else { "s" }
     );
 
     Ok(painted)

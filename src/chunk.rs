@@ -32,6 +32,7 @@ pub struct ColumnOverlay {
     top_thickness: Option<u32>,
     structure_block: Option<Arc<str>>,
     structure_height: Option<u32>,
+    structure_levels: Option<Vec<i32>>,
 }
 
 impl ColumnOverlay {
@@ -44,6 +45,7 @@ impl ColumnOverlay {
         top_thickness: Option<u32>,
         structure_block: Option<Arc<str>>,
         structure_height: Option<u32>,
+        structure_levels: Option<Vec<i32>>,
     ) -> Self {
         Self {
             layer_index,
@@ -54,6 +56,7 @@ impl ColumnOverlay {
             top_thickness,
             structure_block,
             structure_height,
+            structure_levels,
         }
     }
 
@@ -87,6 +90,10 @@ impl ColumnOverlay {
 
     pub fn structure_height_override(&self) -> Option<u32> {
         self.structure_height
+    }
+
+    pub fn structure_levels_override(&self) -> Option<&[i32]> {
+        self.structure_levels.as_deref()
     }
 }
 
@@ -200,13 +207,27 @@ impl ChunkHeights {
 }
 
 fn extended_column_height(surface: i32, overlay: Option<&ColumnOverlay>) -> i32 {
-    match overlay.and_then(|o| o.structure_height_override()) {
-        Some(extra) if extra > 0 => {
-            let top = surface as i64 + extra as i64;
-            top.clamp(i32::MIN as i64, i32::MAX as i64) as i32
-        }
-        _ => surface,
+    let mut top = surface;
+    let Some(overlay) = overlay else {
+        return top;
+    };
+
+    if let Some(level_top) = overlay
+        .structure_levels_override()
+        .and_then(|levels| levels.iter().copied().max())
+    {
+        top = top.max(level_top);
     }
+
+    if let Some(extra) = overlay.structure_height_override() {
+        if extra > 0 {
+            let with_extra = surface as i64 + extra as i64;
+            let clamped = with_extra.clamp(i32::MIN as i64, i32::MAX as i64) as i32;
+            top = top.max(clamped);
+        }
+    }
+
+    top
 }
 
 pub struct WriteStats {
@@ -498,6 +519,10 @@ fn build_sections(
                 .as_ref()
                 .and_then(|o| o.structure_height_override())
                 .unwrap_or(0);
+            let structure_levels = overlay
+                .as_ref()
+                .and_then(|o| o.structure_levels_override())
+                .map(|levels| levels.to_vec());
             let biome_min_y = height.map(|surface| {
                 let min_y = surface as i64 - column_top_thickness as i64 + 1;
                 min_y.clamp(i32::MIN as i64, i32::MAX as i64) as i32
@@ -513,6 +538,7 @@ fn build_sections(
                 biome_min_y,
                 structure_block,
                 structure_height,
+                structure_levels,
             });
         }
     }
@@ -613,6 +639,7 @@ struct ColumnSettings {
     biome_min_y: Option<i32>,
     structure_block: Option<Arc<str>>,
     structure_height: u32,
+    structure_levels: Option<Vec<i32>>,
 }
 
 impl ColumnSettings {
@@ -640,6 +667,12 @@ fn block_for(world_y: i32, column: &ColumnSettings, default_bottom_block: &Arc<s
     let Some(surface) = column.height else {
         return BlockId::Air;
     };
+    if let Some(levels) = &column.structure_levels {
+        if levels.binary_search(&world_y).is_ok() {
+            let block = column.structure_block.as_ref().unwrap_or(&column.top_block);
+            return BlockId::Named(Arc::clone(block));
+        }
+    }
     let structure_top = if column.structure_height > 0 {
         surface.saturating_add(column.structure_height.min(i32::MAX as u32) as i32)
     } else {

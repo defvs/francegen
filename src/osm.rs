@@ -385,6 +385,7 @@ fn build_column_overlay(
         style.top_thickness(),
         structure_block,
         structure_height,
+        None,
     )
 }
 
