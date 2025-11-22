@@ -131,7 +131,13 @@ pub fn run_generate(config: &GenerateConfig) -> Result<()> {
 
     if let Some(copc_dir) = config.copc_dir.as_ref() {
         if let (Some(stats), Some(origin_coord)) = (stats.as_ref(), origin.as_ref()) {
-            apply_copc_buildings(&mut chunks, stats, *origin_coord, copc_dir)?;
+            apply_copc_buildings(
+                &mut chunks,
+                stats,
+                *origin_coord,
+                copc_dir,
+                terrain_config.copc(),
+            )?;
         } else {
             println!(
                 "{} Skipping COPC overlays because world origin metadata is unavailable",

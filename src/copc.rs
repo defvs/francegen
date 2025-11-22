@@ -9,6 +9,7 @@ use geo_types::Coord;
 use owo_colors::OwoColorize;
 
 use crate::chunk::{ChunkHeights, ColumnOverlay};
+use crate::config::CopcConfig;
 use crate::constants::SECTION_SIDE;
 use crate::progress::progress_bar;
 use crate::world::{WorldStats, dem_to_minecraft};
@@ -71,11 +72,27 @@ struct InterpolationParams {
     bands: usize,
     tau_persist: f32,
     min_support: usize,
+    always_pillar: bool,
 }
 
 impl InterpolationParams {
     fn halo_radius(&self) -> i32 {
         (self.r_xy + 1).max(2)
+    }
+
+    fn from_config(config: Option<&CopcConfig>) -> Self {
+        match config {
+            Some(cfg) => Self {
+                r_xy: cfg.r_xy(),
+                h_gap: cfg.h_gap(),
+                t_wall: cfg.t_wall(),
+                bands: cfg.bands(),
+                tau_persist: cfg.tau_persist(),
+                min_support: cfg.min_support(),
+                always_pillar: cfg.always_pillar(),
+            },
+            None => Self::default(),
+        }
     }
 }
 
@@ -88,6 +105,7 @@ impl Default for InterpolationParams {
             bands: 4,
             tau_persist: 0.4,
             min_support: 2,
+            always_pillar: true,
         }
     }
 }
@@ -97,6 +115,7 @@ pub fn apply_copc_buildings(
     stats: &WorldStats,
     origin: Coord,
     dir: &Path,
+    config: Option<&CopcConfig>,
 ) -> Result<usize> {
     if chunks.is_empty() {
         return Ok(0);
@@ -124,7 +143,7 @@ pub fn apply_copc_buildings(
     let mut points_seen: usize = 0;
     let mut building_points: usize = 0;
     let mut usable_points: usize = 0;
-    let params = InterpolationParams::default();
+    let params = InterpolationParams::from_config(config);
 
     for (idx, path) in paths.into_iter().enumerate() {
         let mut reader = CopcReader::from_path(&path)
@@ -212,6 +231,51 @@ pub fn apply_copc_buildings(
     let pb = progress_bar(total_chunks as u64, "Interpolating COPC buildings");
     for ((chunk_x, chunk_z), _) in points_by_chunk.iter() {
         let chunk_bounds = ChunkBounds::for_chunk(*chunk_x, *chunk_z);
+        let Some(chunk) = chunks.get_mut(&(*chunk_x, *chunk_z)) else {
+            pb.inc(1);
+            continue;
+        };
+        if params.always_pillar {
+            let mut max_y_per_column: HashMap<(i32, i32), i32> = HashMap::new();
+            if let Some(points) = points_by_chunk.get(&(*chunk_x, *chunk_z)) {
+                for p in points {
+                    if chunk_bounds.contains(p.x, p.z) {
+                        let entry = max_y_per_column.entry((p.x, p.z)).or_insert(p.y);
+                        if p.y > *entry {
+                            *entry = p.y;
+                        }
+                    }
+                }
+            }
+            for ((world_x, world_z), max_y) in max_y_per_column {
+                let local_x = (world_x - chunk_bounds.min_x) as usize;
+                let local_z = (world_z - chunk_bounds.min_z) as usize;
+                let Some(surface) = chunk.column(local_x, local_z) else {
+                    continue;
+                };
+                if max_y <= surface {
+                    continue;
+                }
+                let height = (max_y - surface) as u32;
+                let overlay = ColumnOverlay::new(
+                    COPC_LAYER_INDEX,
+                    COPC_OVERLAY_ORDER,
+                    None,
+                    None,
+                    None,
+                    None,
+                    Some(Arc::clone(&building_block)),
+                    Some(height),
+                    None,
+                );
+                chunk.apply_overlay(local_x, local_z, overlay);
+                painted += 1;
+                block_count += height as usize;
+            }
+            pb.inc(1);
+            continue;
+        }
+
         let halo_bounds = chunk_bounds.expanded(params.halo_radius());
         let points = gather_points_within(&points_by_chunk, &halo_bounds);
         if points.is_empty() {
@@ -219,10 +283,6 @@ pub fn apply_copc_buildings(
             continue;
         }
         let levels = build_building_levels_for_chunk(&points, &params);
-        let Some(chunk) = chunks.get_mut(&(*chunk_x, *chunk_z)) else {
-            pb.inc(1);
-            continue;
-        };
         for ((world_x, world_z), mut ys) in levels {
             if !chunk_bounds.contains(world_x, world_z) {
                 continue;

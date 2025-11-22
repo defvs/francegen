@@ -28,6 +28,15 @@
     { "range": { "min": "1800m", "max": "2500m" }, "block": "minecraft:stone" },
     { "range": { "max": "8m" },                    "block": "minecraft:sand" }
   ],
+  "copc": {
+    "r_xy": 2,
+    "h_gap": 8,
+    "t_wall": 2,
+    "bands": 5,
+    "tau_persist": 0.35,
+    "min_support": 2,
+    "always_pillar": false
+  },
   "osm": {
     "enabled": true,
     "bbox_margin_m": 500.0,
