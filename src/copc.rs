@@ -10,6 +10,7 @@ use owo_colors::OwoColorize;
 
 use crate::chunk::{ChunkHeights, ColumnOverlay};
 use crate::constants::SECTION_SIDE;
+use crate::progress::progress_bar;
 use crate::world::{WorldStats, dem_to_minecraft};
 
 const COPC_LAYER_INDEX: i32 = -20;
@@ -35,11 +36,12 @@ pub fn apply_copc_buildings(
         );
     }
 
+    let file_count = paths.len();
     println!(
         "{} Applying COPC building overlay from {} file{} ({})",
         "ℹ".blue().bold(),
-        paths.len(),
-        if paths.len() == 1 { "" } else { "s" },
+        file_count,
+        if file_count == 1 { "" } else { "s" },
         dir.display()
     );
 
@@ -48,14 +50,37 @@ pub fn apply_copc_buildings(
     let mut points_seen: usize = 0;
     let mut building_points: usize = 0;
 
-    for path in paths {
+    for (idx, path) in paths.into_iter().enumerate() {
         let mut reader = CopcReader::from_path(&path)
             .with_context(|| format!("Failed to open COPC file {}", path.display()))?;
         let selection = BoundsSelection::Within(bounds);
-        let iter = reader
+        let mut iter = reader
             .points(LodSelection::All, selection)
             .with_context(|| format!("Failed to iterate COPC points from {}", path.display()))?;
-        for point in iter {
+
+        let mut remaining = iter.size_hint().0;
+        let pb_label = format!("COPC {}/{}", idx + 1, file_count);
+        let pb = progress_bar(remaining as u64, &pb_label);
+        let msg = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("COPC file")
+            .to_string();
+        pb.set_message(msg);
+
+        loop {
+            let before = remaining;
+            let point = iter.next();
+            remaining = iter.size_hint().0;
+            let processed = before.saturating_sub(remaining);
+            if processed > 0 {
+                pb.inc(processed as u64);
+            }
+
+            let Some(point) = point else {
+                break;
+            };
+
             points_seen += 1;
             if u8::from(point.classification) != 6 {
                 continue;
@@ -87,6 +112,8 @@ pub fn apply_copc_buildings(
                 })
                 .or_insert(extra);
         }
+
+        pb.finish_and_clear();
     }
 
     let building_block: Arc<str> = Arc::from(DEFAULT_BUILDING_BLOCK);
