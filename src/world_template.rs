@@ -99,6 +99,7 @@ fn customize_level_dat(path: &Path, spawn: &SpawnSettings<'_>) -> Result<()> {
 
     level.data.level_name = spawn.level_name.to_string();
     level.data.set_spawn_position(spawn);
+    level.data.apply_template_settings();
 
     let file = File::create(path)
         .with_context(|| format!("Failed to open {} for writing", path.display()))?;
@@ -122,6 +123,22 @@ struct LevelDat {
 struct LevelData {
     #[serde(rename = "LevelName")]
     level_name: String,
+    #[serde(rename = "Difficulty")]
+    #[serde(default)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    difficulty: Option<i32>,
+    #[serde(rename = "DayTime")]
+    #[serde(default)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    day_time: Option<i64>,
+    #[serde(rename = "GameType")]
+    #[serde(default)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    game_type: Option<i32>,
+    #[serde(rename = "Player")]
+    #[serde(default)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    player: Option<Value>,
     #[serde(rename = "spawn")]
     #[serde(default)]
     spawn: Option<SpawnData>,
@@ -145,6 +162,13 @@ impl LevelData {
                 *existing = Value::Int(value);
             }
         }
+    }
+
+    fn apply_template_settings(&mut self) {
+        self.difficulty = Some(0);
+        self.day_time = Some(6000);
+        self.game_type = Some(1);
+        self.player = None;
     }
 }
 
