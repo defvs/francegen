@@ -6,13 +6,13 @@ use anyhow::{Context, Result, anyhow, bail};
 use geo_types::Coord;
 use owo_colors::OwoColorize;
 
-use crate::chunk::{ChunkHeights, write_regions};
+use crate::chunk::{ChunkHeights, RegionWriteMode, write_regions};
 use crate::chunky::print_chunky_reminder;
 use crate::cli::GenerateConfig;
 use crate::config::TerrainConfig;
 use crate::constants::{BEDROCK_Y, MAX_WORLD_Y, SECTION_SIDE};
 use crate::copc::apply_copc_buildings;
-use crate::metadata::write_metadata;
+use crate::metadata::{load_metadata, metadata_path, write_metadata};
 use crate::osm::apply_osm_overlays;
 use crate::progress::progress_bar;
 use crate::wmts::{WmtsCacheDir, apply_wmts_overlays};
@@ -27,6 +27,21 @@ pub fn run_generate(config: &GenerateConfig) -> Result<()> {
 
     fs::create_dir_all(output)
         .with_context(|| format!("Failed to create output directory {}", output.display()))?;
+
+    let existing_metadata = {
+        let meta_path = metadata_path(output);
+        if meta_path.exists() {
+            let metadata = load_metadata(output)?;
+            println!(
+                "{} Found existing francegen metadata: {} (merging with new output)",
+                "ℹ".blue().bold(),
+                meta_path.display()
+            );
+            Some(metadata)
+        } else {
+            None
+        }
+    };
 
     let mut tif_paths = collect_tifs(input)?;
     if tif_paths.is_empty() {
@@ -47,6 +62,19 @@ pub fn run_generate(config: &GenerateConfig) -> Result<()> {
 
     let ingest_pb = progress_bar(tif_paths.len() as u64, "Ingesting tiles");
     let mut builder = WorldBuilder::new(config.bounds);
+    if let Some(existing) = existing_metadata.as_ref() {
+        let existing_origin = Coord {
+            x: existing.origin_model_x,
+            y: existing.origin_model_z,
+        };
+        builder.set_origin(existing_origin);
+        println!(
+            "{} Using existing world origin ({:.3}, {:.3}) from metadata",
+            "ℹ".blue().bold(),
+            existing_origin.x,
+            existing_origin.y
+        );
+    }
     for path in &tif_paths {
         let msg = path
             .file_name()
@@ -66,16 +94,32 @@ pub fn run_generate(config: &GenerateConfig) -> Result<()> {
 
     let stats = builder.stats();
     let origin = builder.origin_coord();
+    let previous_stats = existing_metadata.as_ref().map(|meta| meta.to_stats());
+    let combined_stats = match (previous_stats.as_ref(), stats.as_ref()) {
+        (Some(existing), Some(current)) => Some(existing.union(current)),
+        (Some(existing), None) => Some(existing.clone()),
+        (None, Some(current)) => Some(current.clone()),
+        (None, None) => None,
+    };
+    let combined_origin = existing_metadata
+        .as_ref()
+        .map(|meta| Coord {
+            x: meta.origin_model_x,
+            y: meta.origin_model_z,
+        })
+        .or(origin);
+
     if let Some(summary) = &stats {
         print_ingest_stats(summary, origin);
     }
 
     if config.meta_only {
-        let origin =
-            origin.ok_or_else(|| anyhow!("Origin not available; unable to write metadata"))?;
-        let stats =
-            stats.ok_or_else(|| anyhow!("No samples were ingested; metadata unavailable"))?;
-        let path = write_metadata(output, origin, &stats)?;
+        let origin = combined_origin
+            .ok_or_else(|| anyhow!("Origin not available; unable to write metadata"))?;
+        let stats = combined_stats
+            .as_ref()
+            .ok_or_else(|| anyhow!("No samples or existing metadata available; metadata unavailable"))?;
+        let path = write_metadata(output, origin, stats)?;
         println!(
             "{} Saved metadata only: {}",
             "ℹ".blue().bold(),
@@ -186,7 +230,10 @@ pub fn run_generate(config: &GenerateConfig) -> Result<()> {
         }
     }
 
-    let write_stats = write_regions(output, &chunks, &terrain_config)?;
+    let write_stats = write_regions(output, &chunks, &terrain_config, match existing_metadata {
+        Some(_) => RegionWriteMode::MergeExisting,
+        None => RegionWriteMode::Fresh,
+    })?;
     print_summary(Summary {
         input_dir: input,
         output_dir: output,
@@ -198,7 +245,7 @@ pub fn run_generate(config: &GenerateConfig) -> Result<()> {
         chunks_written: write_stats.chunks_written,
     });
 
-    if let (Some(stats), Some(origin)) = (stats.as_ref(), origin) {
+    if let (Some(stats), Some(origin)) = (combined_stats.as_ref(), combined_origin) {
         let path = write_metadata(output, origin, stats)?;
         println!("{} Saved metadata: {}", "ℹ".blue().bold(), path.display());
     }
@@ -207,7 +254,7 @@ pub fn run_generate(config: &GenerateConfig) -> Result<()> {
         cache.cleanup()?;
     }
 
-    if let Some(stats) = stats.as_ref() {
+    if let Some(stats) = combined_stats.as_ref() {
         let spawn_x = stats.center_x.round() as i32;
         let spawn_z = stats.center_z.round() as i32;
         let spawn_y = column_height_at(&chunks, spawn_x, spawn_z).unwrap_or(DEFAULT_SPAWN_Y);
