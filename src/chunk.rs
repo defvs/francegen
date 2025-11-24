@@ -347,8 +347,12 @@ pub fn write_regions(
         .into_par_iter()
         .map(|((region_x, region_z), coords)| -> Result<usize> {
             let pb = pb.clone();
-            let mut region =
-                open_region(region_dir.as_ref(), region_x, region_z, preserve_existing_regions)?;
+            let mut region = open_region(
+                region_dir.as_ref(),
+                region_x,
+                region_z,
+                preserve_existing_regions,
+            )?;
             let mut written = 0usize;
             for job in coords {
                 let chunk_x = job.chunk_x;
@@ -386,12 +390,7 @@ pub fn write_regions(
     })
 }
 
-fn open_region(
-    dir: &Path,
-    rx: i32,
-    rz: i32,
-    preserve_existing: bool,
-) -> Result<Region<File>> {
+fn open_region(dir: &Path, rx: i32, rz: i32, preserve_existing: bool) -> Result<Region<File>> {
     let file_path = dir.join(format!("r.{rx}.{rz}.mca"));
     let file = File::options()
         .read(true)

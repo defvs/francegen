@@ -193,4 +193,4 @@ You can also paint landuse from a tiled WMTS layer. Add a `wmts` block to the co
 
 `capabilities_url`, `layer`, `tile_matrix_set`, and `tile_matrix` identify which WMTS layer/zoom to sample. Each `colors` entry describes a target pixel (hex `#RRGGBB` or `#RRGGBBAA`) plus an optional per-channel `tolerance` and the overlay style to apply when that color is seen. `alpha_threshold` filters out transparent pixels, while `layer_index` mirrors the OSM behavior for ordering.
 
-Tiles are prefetched before rasterization. By default they are downloaded once per run into a unique temporary directory that is deleted at the end; pass `--cache-dir <path>` to reuse or inspect the files between runs. Increase `max_tiles` if you deliberately need a wide bbox/zoom combination.
+ Tiles are prefetched before rasterization. By default they are downloaded once per run into a unique temporary directory that is deleted at the end; pass `--cache-dir <path>` to reuse or inspect the files between runs inside `<path>/wmts/`. Increase `max_tiles` if you deliberately need a wide bbox/zoom combination.

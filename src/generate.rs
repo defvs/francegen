@@ -116,9 +116,9 @@ pub fn run_generate(config: &GenerateConfig) -> Result<()> {
     if config.meta_only {
         let origin = combined_origin
             .ok_or_else(|| anyhow!("Origin not available; unable to write metadata"))?;
-        let stats = combined_stats
-            .as_ref()
-            .ok_or_else(|| anyhow!("No samples or existing metadata available; metadata unavailable"))?;
+        let stats = combined_stats.as_ref().ok_or_else(|| {
+            anyhow!("No samples or existing metadata available; metadata unavailable")
+        })?;
         let path = write_metadata(output, origin, stats)?;
         println!(
             "{} Saved metadata only: {}",
@@ -158,20 +158,23 @@ pub fn run_generate(config: &GenerateConfig) -> Result<()> {
     let chunk_count = chunks.len();
 
     let mut wmts_cache = None;
-    let mut cache_root = None;
-    if terrain_config
+    let wmts_enabled = terrain_config
         .wmts()
         .map(|cfg| cfg.enabled())
-        .unwrap_or(false)
-    {
+        .unwrap_or(false);
+    if wmts_enabled {
         let cache = WmtsCacheDir::prepare(config.cache_dir.clone())?;
-        cache_root = Some(cache.root().to_path_buf());
         wmts_cache = Some(cache);
-    } else if let Some(path) = config.cache_dir.as_ref() {
+    }
+    if let Some(path) = config.cache_dir.as_ref() {
         fs::create_dir_all(path)
             .with_context(|| format!("Failed to create cache dir {}", path.display()))?;
-        cache_root = Some(path.clone());
     }
+    let cache_root = match (config.cache_dir.as_ref(), wmts_cache.as_ref()) {
+        (Some(path), _) => Some(path.clone()),
+        (None, Some(cache)) => Some(cache.root().to_path_buf()),
+        _ => None,
+    };
 
     if let Some(copc_dir) = config.copc_dir.as_ref() {
         if let (Some(stats), Some(origin_coord)) = (stats.as_ref(), origin.as_ref()) {
@@ -230,10 +233,15 @@ pub fn run_generate(config: &GenerateConfig) -> Result<()> {
         }
     }
 
-    let write_stats = write_regions(output, &chunks, &terrain_config, match existing_metadata {
-        Some(_) => RegionWriteMode::MergeExisting,
-        None => RegionWriteMode::Fresh,
-    })?;
+    let write_stats = write_regions(
+        output,
+        &chunks,
+        &terrain_config,
+        match existing_metadata {
+            Some(_) => RegionWriteMode::MergeExisting,
+            None => RegionWriteMode::Fresh,
+        },
+    )?;
     print_summary(Summary {
         input_dir: input,
         output_dir: output,
