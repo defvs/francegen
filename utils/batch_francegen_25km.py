@@ -7,6 +7,7 @@ The WMS request mirrors utils/wms_dl.py (same base URL, layer, pixel size, and
 tile dimensions). Each macro-tile is a 5x5 grid of 1 km tiles.
 """
 import argparse
+import datetime
 import itertools
 import os
 import shlex
@@ -28,6 +29,7 @@ TILE_SIZE_M = TILE_WIDTH_PX * PIXEL_SIZE  # 1000m tiles
 MACRO_TILE_SIDE_M = 5_000  # 5 km -> 25 km²
 MACRO_TILE_GRID = 5  # 5 x 5 tiles per macro-tile
 REQUEST_DELAY_S = 0.1  # polite delay between WMS calls
+DONE_MARKER = ".francegen_done"
 
 
 def parse_args() -> argparse.Namespace:
@@ -79,6 +81,14 @@ def parse_args() -> argparse.Namespace:
         "--skip-existing",
         action="store_true",
         help="Skip downloading tiles that already exist on disk.",
+    )
+    parser.add_argument(
+        "--resume",
+        action="store_true",
+        help=(
+            "Resume from the last completed macro-tile (based on marker files in the tiles root). "
+            "Useful after an interrupted run."
+        ),
     )
     return parser.parse_args()
 
@@ -151,6 +161,28 @@ def run_francegen(bin_path: str, extra_args: str, tif_dir: Path, world_dir: Path
     subprocess.run(cmd, check=True)
 
 
+def completion_marker(macro_dir: Path) -> Path:
+    return macro_dir / DONE_MARKER
+
+
+def mark_completed(macro_dir: Path, cmd: list[str]):
+    marker = completion_marker(macro_dir)
+    payload = {
+        "completed_at": datetime.datetime.utcnow().isoformat() + "Z",
+        "command": cmd,
+    }
+    marker.write_text(repr(payload), encoding="utf-8")
+
+
+def find_resume_index(macro_tiles, tiles_root: Path) -> int:
+    """Return index of the first macro-tile without a completion marker."""
+    for idx, (mx, my, _, _) in enumerate(macro_tiles):
+        macro_dir = tiles_root / f"macro_x{mx:+d}_y{my:+d}"
+        if not completion_marker(macro_dir).exists():
+            return idx
+    return len(macro_tiles)
+
+
 def main():
     args = parse_args()
     tiles_root = Path(args.tiles_root)
@@ -162,11 +194,24 @@ def main():
     macro_tiles = list(macro_tile_centers(args.center_x, args.center_y, args.macro_radius))
     print(f"Preparing {len(macro_tiles)} macro-tile(s) of 25 km² each")
 
-    for idx, (mx, my, cx, cy) in enumerate(macro_tiles, start=1):
+    start_idx = find_resume_index(macro_tiles, tiles_root) if args.resume else 0
+    if start_idx >= len(macro_tiles):
+        print("All macro-tiles already completed; nothing to do.")
+        return
+
+    if args.resume and start_idx > 0:
+        print(f"Resuming after index {start_idx - 1}; skipping {start_idx} completed macro-tile(s)")
+
+    for loop_idx, (mx, my, cx, cy) in enumerate(macro_tiles[start_idx:], start=start_idx + 1):
         macro_dir = tiles_root / f"macro_x{mx:+d}_y{my:+d}"
-        print(f"[{idx}/{len(macro_tiles)}] Macro tile offset ({mx}, {my}) at center ({cx:.2f}, {cy:.2f})")
+        print(f"[{loop_idx}/{len(macro_tiles)}] Macro tile offset ({mx}, {my}) at center ({cx:.2f}, {cy:.2f})")
         download_macro_tile(macro_dir, cx, cy, args.skip_existing)
+        cmd = [args.francegen_bin]
+        if args.francegen_args.strip():
+            cmd.extend(shlex.split(args.francegen_args))
+        cmd.extend([str(macro_dir), str(world_dir)])
         run_francegen(args.francegen_bin, args.francegen_args, macro_dir, world_dir)
+        mark_completed(macro_dir, cmd)
 
 
 if __name__ == "__main__":
