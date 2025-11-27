@@ -204,6 +204,14 @@ impl ChunkHeights {
         let surface = self.heights[idx]?;
         Some(extended_column_height(surface, self.overlays[idx].as_ref()))
     }
+
+    pub fn filled_columns(&self) -> usize {
+        self.heights.iter().filter(|h| h.is_some()).count()
+    }
+
+    pub fn is_complete(&self) -> bool {
+        self.filled_columns() == SECTION_SIDE * SECTION_SIDE
+    }
 }
 
 fn extended_column_height(surface: i32, overlay: Option<&ColumnOverlay>) -> i32 {
@@ -288,7 +296,12 @@ pub fn write_regions(
     let mut max_chunk_x = i32::MIN;
     let mut min_chunk_z = i32::MAX;
     let mut max_chunk_z = i32::MIN;
-    for (&(chunk_x, chunk_z), _) in chunks.iter() {
+    let mut skipped_incomplete = 0usize;
+    for (&(chunk_x, chunk_z), columns) in chunks.iter() {
+        if !columns.is_complete() {
+            skipped_incomplete += 1;
+            continue;
+        }
         let region_x = chunk_x.div_euclid(32);
         let region_z = chunk_z.div_euclid(32);
         per_region
@@ -299,6 +312,12 @@ pub fn write_regions(
         max_chunk_x = max_chunk_x.max(chunk_x);
         min_chunk_z = min_chunk_z.min(chunk_z);
         max_chunk_z = max_chunk_z.max(chunk_z);
+    }
+    if skipped_incomplete > 0 {
+        println!(
+            "Skipping {} incomplete chunk(s) lacking full column coverage",
+            skipped_incomplete
+        );
     }
 
     let add_padding = matches!(mode, RegionWriteMode::Fresh);
@@ -424,6 +443,9 @@ fn build_chunk_bytes(
     columns: &ChunkHeights,
     terrain: &TerrainConfig,
 ) -> Result<Option<Vec<u8>>> {
+    if !columns.is_complete() {
+        return Ok(None);
+    }
     let max_height = match columns.max_height() {
         Some(value) => value,
         None => return Ok(None),

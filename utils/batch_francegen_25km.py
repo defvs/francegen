@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """
-Download 5 km x 5 km (25 km²) macro-tiles from the IGN WMS and invoke francegen
-sequentially for each macro-tile, merging into a single world directory.
+Download chunk-aligned macro-tiles from the IGN WMS and invoke francegen
+sequentially for each macro-tile, merging into a single world directory. Each
+macro-tile is 5 x 1024 m (≈5.12 km) per side, guaranteeing chunk alignment.
 
 The WMS request mirrors utils/wms_dl.py (same base URL, layer, pixel size, and
-tile dimensions). Each macro-tile is a 5x5 grid of 1 km tiles.
+tile dimensions). Each macro-tile is a 5x5 grid of 1024 m tiles.
 """
 import argparse
 import datetime
@@ -22,19 +23,27 @@ from tqdm import tqdm
 BASE_URL = "https://data.geopf.fr/wms-r"
 LAYER = "IGNF_LIDAR-HD_MNT_ELEVATION.ELEVATIONGRIDCOVERAGE.LAMB93"
 PIXEL_SIZE = 0.5  # meters per pixel
-TILE_WIDTH_PX = 2000
-TILE_HEIGHT_PX = 2000
-TILE_SIZE_M = TILE_WIDTH_PX * PIXEL_SIZE  # 1000m tiles
+# 2048 px @ 0.5 m/px -> 1024 m tiles (64 chunks), chunk-aligned
+TILE_WIDTH_PX = 2048
+TILE_HEIGHT_PX = 2048
+TILE_SIZE_M = TILE_WIDTH_PX * PIXEL_SIZE  # 1024m tiles
+CHUNK_SIZE_M = 16
 
-MACRO_TILE_SIDE_M = 5_000  # 5 km -> 25 km²
 MACRO_TILE_GRID = 5  # 5 x 5 tiles per macro-tile
+# 5 x 1024 m -> 5,120 m (chunk-aligned) ≈ 26.2 km²
+MACRO_TILE_SIDE_M = MACRO_TILE_GRID * TILE_SIZE_M
 REQUEST_DELAY_S = 0.1  # polite delay between WMS calls
 DONE_MARKER = ".francegen_done"
 
 
+def quantize_to_chunk(value: float) -> float:
+    """Snap a coordinate to the nearest chunk boundary."""
+    return round(value / CHUNK_SIZE_M) * CHUNK_SIZE_M
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Download 25 km² macro-tiles and run francegen sequentially."
+        description="Download chunk-aligned macro-tiles and run francegen sequentially."
     )
     parser.add_argument(
         "--tiles-root",
@@ -62,10 +71,7 @@ def parse_args() -> argparse.Namespace:
         "--macro-radius",
         type=int,
         default=0,
-        help=(
-            "Number of 25 km² macro-tiles to include outward from the center in each axis. "
-            "0 = just the center tile, 1 = 3x3 grid, etc."
-        ),
+        help="Number of macro-tiles to include outward from the center in each axis (0 = just the center tile, 1 = 3x3 grid, etc.).",
     )
     parser.add_argument(
         "--francegen-bin",
@@ -86,23 +92,26 @@ def parse_args() -> argparse.Namespace:
         "--resume",
         action="store_true",
         help=(
-            "Resume from the last completed macro-tile (based on marker files in the tiles root). "
-            "Useful after an interrupted run."
+            "Skip macro-tiles that already have completion markers in the tiles root. "
+            "Useful after an interrupted run or when reordering tiles."
         ),
     )
     return parser.parse_args()
 
 
 def macro_tile_centers(center_x: float, center_y: float, radius: int):
-    """Yield (macro_x_idx, macro_y_idx, center_x, center_y) for each macro-tile."""
-    for dy in range(-radius, radius + 1):
-        for dx in range(-radius, radius + 1):
-            yield (
-                dx,
-                dy,
-                center_x + dx * MACRO_TILE_SIDE_M,
-                center_y + dy * MACRO_TILE_SIDE_M,
-            )
+    """Yield (macro_x_idx, macro_y_idx, center_x, center_y) in concentric rings, row-ordered within each ring."""
+    for ring in range(0, radius + 1):
+        for dy in range(-ring, ring + 1):
+            for dx in range(-ring, ring + 1):
+                if max(abs(dx), abs(dy)) != ring:
+                    continue
+                yield (
+                    dx,
+                    dy,
+                    center_x + dx * MACRO_TILE_SIDE_M,
+                    center_y + dy * MACRO_TILE_SIDE_M,
+                )
 
 
 def download_macro_tile(dest_dir: Path, center_x: float, center_y: float, skip_existing: bool):
@@ -167,51 +176,66 @@ def completion_marker(macro_dir: Path) -> Path:
 
 def mark_completed(macro_dir: Path, cmd: list[str]):
     marker = completion_marker(macro_dir)
+    completed_at = datetime.datetime.now(datetime.UTC).isoformat().replace("+00:00", "Z")
     payload = {
-        "completed_at": datetime.datetime.utcnow().isoformat() + "Z",
+        "completed_at": completed_at,
         "command": cmd,
     }
     marker.write_text(repr(payload), encoding="utf-8")
-
-
-def find_resume_index(macro_tiles, tiles_root: Path) -> int:
-    """Return index of the first macro-tile without a completion marker."""
-    for idx, (mx, my, _, _) in enumerate(macro_tiles):
-        macro_dir = tiles_root / f"macro_x{mx:+d}_y{my:+d}"
-        if not completion_marker(macro_dir).exists():
-            return idx
-    return len(macro_tiles)
 
 
 def main():
     args = parse_args()
     tiles_root = Path(args.tiles_root)
     world_dir = Path(args.world)
+    aligned_center_x = quantize_to_chunk(args.center_x)
+    aligned_center_y = quantize_to_chunk(args.center_y)
+    if aligned_center_x != args.center_x or aligned_center_y != args.center_y:
+        print(
+            f"Center snapped to chunk grid: ({args.center_x:.3f}, {args.center_y:.3f}) -> "
+            f"({aligned_center_x:.3f}, {aligned_center_y:.3f})"
+        )
 
     if not tiles_root.exists():
         tiles_root.mkdir(parents=True, exist_ok=True)
 
-    macro_tiles = list(macro_tile_centers(args.center_x, args.center_y, args.macro_radius))
-    print(f"Preparing {len(macro_tiles)} macro-tile(s) of 25 km² each")
+    macro_tiles = list(macro_tile_centers(aligned_center_x, aligned_center_y, args.macro_radius))
+    print(
+        f"Preparing {len(macro_tiles)} macro-tile(s) of "
+        f"{MACRO_TILE_SIDE_M/1000:.2f} km per side (chunk-aligned)"
+    )
 
-    start_idx = find_resume_index(macro_tiles, tiles_root) if args.resume else 0
-    if start_idx >= len(macro_tiles):
+    if args.resume:
+        pending_tiles = []
+        skipped_completed = 0
+        for mx, my, cx, cy in macro_tiles:
+            macro_dir = tiles_root / f"macro_x{mx:+d}_y{my:+d}"
+            if completion_marker(macro_dir).exists():
+                skipped_completed += 1
+                continue
+            pending_tiles.append((mx, my, cx, cy))
+        if skipped_completed:
+            print(f"Resume enabled; skipping {skipped_completed} completed macro-tile(s)")
+        macro_tiles = pending_tiles
+
+    if not macro_tiles:
         print("All macro-tiles already completed; nothing to do.")
         return
 
-    if args.resume and start_idx > 0:
-        print(f"Resuming after index {start_idx - 1}; skipping {start_idx} completed macro-tile(s)")
-
-    for loop_idx, (mx, my, cx, cy) in enumerate(macro_tiles[start_idx:], start=start_idx + 1):
-        macro_dir = tiles_root / f"macro_x{mx:+d}_y{my:+d}"
-        print(f"[{loop_idx}/{len(macro_tiles)}] Macro tile offset ({mx}, {my}) at center ({cx:.2f}, {cy:.2f})")
-        download_macro_tile(macro_dir, cx, cy, args.skip_existing)
-        cmd = [args.francegen_bin]
-        if args.francegen_args.strip():
-            cmd.extend(shlex.split(args.francegen_args))
-        cmd.extend([str(macro_dir), str(world_dir)])
-        run_francegen(args.francegen_bin, args.francegen_args, macro_dir, world_dir)
-        mark_completed(macro_dir, cmd)
+    total_tiles = len(macro_tiles)
+    with tqdm(total=total_tiles, desc="Macro tiles", unit="macro-tile") as macro_pbar:
+        for loop_idx, (mx, my, cx, cy) in enumerate(macro_tiles, start=1):
+            macro_dir = tiles_root / f"macro_x{mx:+d}_y{my:+d}"
+            macro_pbar.set_postfix_str(f"offset=({mx}, {my})")
+            tqdm.write(f"[{loop_idx}/{total_tiles}] Macro tile offset ({mx}, {my}) at center ({cx:.2f}, {cy:.2f})")
+            download_macro_tile(macro_dir, cx, cy, args.skip_existing)
+            cmd = [args.francegen_bin]
+            if args.francegen_args.strip():
+                cmd.extend(shlex.split(args.francegen_args))
+            cmd.extend([str(macro_dir), str(world_dir)])
+            run_francegen(args.francegen_bin, args.francegen_args, macro_dir, world_dir)
+            mark_completed(macro_dir, cmd)
+            macro_pbar.update(1)
 
 
 if __name__ == "__main__":
