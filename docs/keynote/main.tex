@@ -20,7 +20,7 @@
 \date{November 28, 2025}
 
 \titlegraphic{%
-  \includegraphics[height=0.45\textheight]{puydedome.png}%
+  \includegraphics[height=0.45\textheight]{puydedome.jpg}%
 }
 
 \begin{document}
@@ -54,7 +54,7 @@
     \item The in-game scale simply doesn't match real-world topography.
   \end{itemize}
   \begin{center}
-    \includegraphics[height=0.5\textheight]{keynote/minecraft_ski.png}
+    \includegraphics[height=0.5\textheight]{keynote/minecraft_ski.jpg}
 
     \vspace{0.1em}
     {\scriptsize My first ski resort, using Terralith generation mod.}
@@ -68,7 +68,7 @@
     \item A convincing 1{:}1 experience needs real elevation data or custom generation.
   \end{itemize}
   \begin{center}
-    \includegraphics[height=0.6\textheight]{keynote/minecraft_regular_mountains.png}
+    \includegraphics[height=0.6\textheight]{keynote/minecraft_regular_mountains.jpg}
   \end{center}
 \end{frame}
 
@@ -79,7 +79,7 @@
     \item That moment of realization: \emph{“Wait, I can use this for so many things!”}
   \end{itemize}
   \begin{center}
-    \includegraphics[height=0.55\textheight]{keynote/lidarhd_example.png}
+    \includegraphics[height=0.55\textheight]{keynote/lidarhd_example.jpg}
 
     % \vspace{0.1em}
     {\scriptsize Viaduc de Millau, France, from LIDAR-HD, \copyright~IGN}
@@ -108,7 +108,7 @@
       \end{itemize}
     \column{0.4\textwidth}
       \begin{center}
-        \includegraphics[width=\linewidth]{keynote/what_is_gis.png}
+        \includegraphics[width=\linewidth]{keynote/what_is_gis.jpg}
       \end{center}
   \end{columns}
 \end{frame}
@@ -122,7 +122,7 @@
     \item francegen uses Overpass QL to pull vector data that later gets converted into blocks.
   \end{itemize}
   \begin{center}
-    \includegraphics[height=0.45\textheight]{keynote/overpass.png}
+    \includegraphics[height=0.45\textheight]{keynote/overpass.jpg}
   \end{center}
 \end{frame}
 
@@ -135,7 +135,7 @@
     \item Painted biomes manually from satellite imagery to approximate real landscapes.
   \end{itemize}
   \begin{center}
-    \includegraphics[height=0.6\textheight]{keynote/worldpainter_screenshot.png}
+    \includegraphics[height=0.6\textheight]{keynote/worldpainter_screenshot.jpg}
   \end{center}
 \end{frame}
 
@@ -193,7 +193,7 @@
     \item Generate base terrain and cliffs at 1{:}1 horizontal and vertical resolution.
   \end{itemize}
   \begin{center}
-    \includegraphics[height=0.6\textheight]{keynote/2alpes_heightmap.png}
+    \includegraphics[height=0.6\textheight]{keynote/2alpes_heightmap.jpg}
 
     % \vspace{0.1em}
     {\scriptsize Les 2 Alpes heightmap, \copyright~IGN}
@@ -207,7 +207,7 @@
     \item Map these features to block palettes and structures in the world.
   \end{itemize}
   \begin{center}
-    \includegraphics[height=0.6\textheight]{keynote/2alpes_osm.png}
+    \includegraphics[height=0.6\textheight]{keynote/2alpes_osm.jpg}
 
     \vspace{-0.1em}
     {\scriptsize Les 2 Alpes on OpenStreetMap, \copyright~OpenStreetMap Contributors}
@@ -224,12 +224,12 @@
       \end{itemize}
     \column{0.5\textwidth}
       \begin{center}
-        \includegraphics[width=0.6\linewidth]{keynote/cosia_datasheet.png}
+        \includegraphics[width=0.6\linewidth]{keynote/cosia_datasheet.jpg}
       \end{center}
   \end{columns}
 
   \begin{center}
-    \includegraphics[width=0.38\textwidth]{keynote/2alpes_wmts_cosia.png}
+    \includegraphics[width=0.38\textwidth]{keynote/2alpes_wmts_cosia.jpg}
 
     % \vspace{0.1em}
     {\scriptsize Les 2 Alpes landuse, \copyright~IGN}
@@ -243,7 +243,7 @@
     \item Use point clouds directly when OSM building heights or shapes are missing.
   \end{itemize}
   \begin{center}
-    \includegraphics[width=0.55\textwidth]{keynote/2alpes_lidar.png}
+    \includegraphics[width=0.55\textwidth]{keynote/2alpes_lidar.jpg}
 
     % \vspace{0.1em}
     {\scriptsize Les 2 Alpes LIDAR-HD, \copyright~IGN}
@@ -265,7 +265,7 @@
     \item Example: fetch \verb+way["waterway"]+ from OverpassQL and paint resulting ways with water, width of 2m.
   \end{itemize}
   \begin{center}
-    \includegraphics[width=0.5\textwidth]{keynote/json_configuration.png}
+    \includegraphics[width=0.5\textwidth]{keynote/json_configuration.jpg}
   \end{center}
 \end{frame}
 
@@ -325,25 +325,29 @@
   }
 \end{frame}
 
-% TODO screenshots
+\begin{frame}[plain]
+    \makebox[\linewidth]{\includegraphics[width=\paperwidth]{2alpes_from_west.jpg}}
+\end{frame}
 
-% \begin{frame}{Puy de Dôme}
-%   \begin{center}
-%     \includegraphics[height=0.4\textheight]{puydedome.png}
-%   \end{center}
-% \end{frame}
+\begin{frame}[plain]
+    \makebox[\linewidth]{\includegraphics[width=\paperwidth]{venosc.jpg}}
+\end{frame}
 
-% \begin{frame}{Les 2 Alpes / Venosc}
-%   \begin{center}
-%     \includegraphics[height=0.4\textheight]{puydedome.png}
-%   \end{center}
-% \end{frame}
+\begin{frame}[plain]
+    \makebox[\linewidth]{\includegraphics[width=\paperwidth]{vallon_du_diable_selle.jpg}}
+\end{frame}
 
-% \begin{frame}{Paris Champs-Elysées}
-%   \begin{center}
-%     \includegraphics[height=0.4\textheight]{puydedome.png}
-%   \end{center}
-% \end{frame}
+\begin{frame}[plain]
+    \makebox[\linewidth]{\includegraphics[width=\paperwidth]{puydedome_raw.jpg}}
+\end{frame}
+
+\begin{frame}[plain]
+    \makebox[\linewidth]{\includegraphics[width=\paperwidth]{2alpes_lidar_buildings.jpg}}
+\end{frame}
+
+\begin{frame}[plain]
+    \makebox[\linewidth]{\includegraphics[width=\paperwidth]{paris_lidar_buildings.jpg}}
+\end{frame}
 
 \begin{frame}{Exploring Les 2 Alpes (Live Demo)}
   \begin{itemize}
