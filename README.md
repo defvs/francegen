@@ -1,4 +1,4 @@
-![francegen logo](docs/images/puydedome.png)
+![francegen logo](docs/images/puydedome.jpg)
 *Puy de Dôme, France*
 
 ![francegen terrain](docs/images/venosc.gif)
