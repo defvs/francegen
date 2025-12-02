@@ -33,18 +33,25 @@ pub struct WmtsCacheDir {
 impl WmtsCacheDir {
     pub fn prepare(explicit: Option<PathBuf>) -> Result<Self> {
         match explicit {
-            Some(path) => {
-                if path.exists() && !path.is_dir() {
+            Some(base) => {
+                if base.exists() && !base.is_dir() {
                     bail!(
                         "WMTS cache path {} exists and is not a directory",
-                        path.display()
+                        base.display()
                     );
                 }
-                fs::create_dir_all(&path).with_context(|| {
-                    format!("Failed to create WMTS cache dir {}", path.display())
+                let root = base.join("wmts");
+                if root.exists() && !root.is_dir() {
+                    bail!(
+                        "WMTS cache path {} exists and is not a directory",
+                        root.display()
+                    );
+                }
+                fs::create_dir_all(&root).with_context(|| {
+                    format!("Failed to create WMTS cache dir {}", root.display())
                 })?;
                 Ok(Self {
-                    root: path,
+                    root,
                     auto_cleanup: false,
                 })
             }

@@ -33,6 +33,25 @@ impl WorldMetadata {
             max_height: stats.max_height,
         }
     }
+
+    pub fn to_stats(&self) -> WorldStats {
+        let width = (self.max_x - self.min_x + 1).max(0) as usize;
+        let depth = (self.max_z - self.min_z + 1).max(0) as usize;
+        let center_x = (self.min_x + self.max_x) as f64 / 2.0;
+        let center_z = (self.min_z + self.max_z) as f64 / 2.0;
+        WorldStats {
+            width,
+            depth,
+            min_height: self.min_height,
+            max_height: self.max_height,
+            min_x: self.min_x,
+            max_x: self.max_x,
+            min_z: self.min_z,
+            max_z: self.max_z,
+            center_x,
+            center_z,
+        }
+    }
 }
 
 pub fn write_metadata(output: &Path, origin: Coord, stats: &WorldStats) -> Result<PathBuf> {

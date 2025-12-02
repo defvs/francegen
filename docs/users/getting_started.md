@@ -21,7 +21,7 @@ francegen [--threads <N>] [--meta-only] [--bounds <min_x,min_z,max_x,max_z>] [--
 | `--threads <N>` | Override Rayon’s worker count. Defaults to the number of logical CPUs. |
 | `--meta-only` | Read the tiles and emit only metadata (no region files). Useful to grab the origin before committing to a full build. |
 | `--config <file>` | Load a JSON terrain configuration file to control block layers and the base biome. |
-| `--cache-dir <path>` | Directory for cached remote downloads (Overpass responses and WMTS tiles). Defaults to a temporary folder that is deleted after the run. |
+| `--cache-dir <path>` | Directory for cached remote downloads (`overpass/` for OSM, `wmts/` for tiles). Defaults to a temporary folder that is deleted after the run. |
 | `--bounds <min_x,min_z,max_x,max_z>` | Clip generation to a rectangle in real/model coordinates (metres in the GeoTIFF CRS, matching `francegen locate`). |
 
 During ingestion the tool prints world-size estimates, DEM min/max, and the origin in model space. When generation finishes, it writes the usual `region/` directory plus a `francegen_meta.json` file inside `<output-world>` containing the GeoTIFF origin and bounds.

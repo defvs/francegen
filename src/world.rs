@@ -71,6 +71,10 @@ impl WorldBuilder {
         }
     }
 
+    pub fn set_origin(&mut self, origin: Coord) {
+        self.origin = Some(origin);
+    }
+
     pub fn sample_count(&self) -> usize {
         self.samples
     }
@@ -201,6 +205,33 @@ impl WorldBuilder {
         self.max_z = self.max_z.max(z);
         self.min_height = self.min_height.min(height_value);
         self.max_height = self.max_height.max(height_value);
+    }
+}
+
+impl WorldStats {
+    pub fn union(&self, other: &WorldStats) -> WorldStats {
+        let min_x = self.min_x.min(other.min_x);
+        let max_x = self.max_x.max(other.max_x);
+        let min_z = self.min_z.min(other.min_z);
+        let max_z = self.max_z.max(other.max_z);
+        let min_height = self.min_height.min(other.min_height);
+        let max_height = self.max_height.max(other.max_height);
+        let width = (max_x - min_x + 1).max(0) as usize;
+        let depth = (max_z - min_z + 1).max(0) as usize;
+        let center_x = (min_x + max_x) as f64 / 2.0;
+        let center_z = (min_z + max_z) as f64 / 2.0;
+        WorldStats {
+            width,
+            depth,
+            min_height,
+            max_height,
+            min_x,
+            max_x,
+            min_z,
+            max_z,
+            center_x,
+            center_z,
+        }
     }
 }
 

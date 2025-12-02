@@ -204,6 +204,14 @@ impl ChunkHeights {
         let surface = self.heights[idx]?;
         Some(extended_column_height(surface, self.overlays[idx].as_ref()))
     }
+
+    pub fn filled_columns(&self) -> usize {
+        self.heights.iter().filter(|h| h.is_some()).count()
+    }
+
+    pub fn is_complete(&self) -> bool {
+        self.filled_columns() == SECTION_SIDE * SECTION_SIDE
+    }
 }
 
 fn extended_column_height(surface: i32, overlay: Option<&ColumnOverlay>) -> i32 {
@@ -236,6 +244,12 @@ pub struct WriteStats {
 }
 
 #[derive(Clone, Copy)]
+pub enum RegionWriteMode {
+    Fresh,
+    MergeExisting,
+}
+
+#[derive(Clone, Copy)]
 struct ChunkJob {
     chunk_x: i32,
     chunk_z: i32,
@@ -264,6 +278,7 @@ pub fn write_regions(
     output: &Path,
     chunks: &HashMap<(i32, i32), ChunkHeights>,
     terrain: &TerrainConfig,
+    mode: RegionWriteMode,
 ) -> Result<WriteStats> {
     if chunks.is_empty() {
         return Ok(WriteStats {
@@ -281,7 +296,12 @@ pub fn write_regions(
     let mut max_chunk_x = i32::MIN;
     let mut min_chunk_z = i32::MAX;
     let mut max_chunk_z = i32::MIN;
-    for (&(chunk_x, chunk_z), _) in chunks.iter() {
+    let mut skipped_incomplete = 0usize;
+    for (&(chunk_x, chunk_z), columns) in chunks.iter() {
+        if !columns.is_complete() {
+            skipped_incomplete += 1;
+            continue;
+        }
         let region_x = chunk_x.div_euclid(32);
         let region_z = chunk_z.div_euclid(32);
         per_region
@@ -293,9 +313,16 @@ pub fn write_regions(
         min_chunk_z = min_chunk_z.min(chunk_z);
         max_chunk_z = max_chunk_z.max(chunk_z);
     }
+    if skipped_incomplete > 0 {
+        println!(
+            "Skipping {} incomplete chunk(s) lacking full column coverage",
+            skipped_incomplete
+        );
+    }
 
+    let add_padding = matches!(mode, RegionWriteMode::Fresh);
     let padding = terrain.empty_chunk_radius() as i32;
-    if padding > 0 && min_chunk_x <= max_chunk_x && min_chunk_z <= max_chunk_z {
+    if add_padding && padding > 0 && min_chunk_x <= max_chunk_x && min_chunk_z <= max_chunk_z {
         let padded_min_x = min_chunk_x.saturating_sub(padding);
         let padded_max_x = max_chunk_x.saturating_add(padding);
         let padded_min_z = min_chunk_z.saturating_sub(padding);
@@ -333,12 +360,18 @@ pub fn write_regions(
     let pb = Arc::new(progress_bar(total_chunks as u64, "Writing chunks"));
     let region_dir = Arc::new(region_dir);
     let region_file_count = per_region.len();
+    let preserve_existing_regions = matches!(mode, RegionWriteMode::MergeExisting);
 
     let chunks_written = per_region
         .into_par_iter()
         .map(|((region_x, region_z), coords)| -> Result<usize> {
             let pb = pb.clone();
-            let mut region = create_region(region_dir.as_ref(), region_x, region_z)?;
+            let mut region = open_region(
+                region_dir.as_ref(),
+                region_x,
+                region_z,
+                preserve_existing_regions,
+            )?;
             let mut written = 0usize;
             for job in coords {
                 let chunk_x = job.chunk_x;
@@ -376,16 +409,32 @@ pub fn write_regions(
     })
 }
 
-fn create_region(dir: &Path, rx: i32, rz: i32) -> Result<Region<File>> {
+fn open_region(dir: &Path, rx: i32, rz: i32, preserve_existing: bool) -> Result<Region<File>> {
     let file_path = dir.join(format!("r.{rx}.{rz}.mca"));
     let file = File::options()
         .read(true)
         .write(true)
         .create(true)
-        .truncate(true)
         .open(&file_path)
         .with_context(|| format!("Failed to open region file {}", file_path.display()))?;
-    Region::new(file).with_context(|| format!("Failed to initialize {}", file_path.display()))
+    let file_len = file
+        .metadata()
+        .with_context(|| format!("Failed to inspect region file {}", file_path.display()))?
+        .len();
+    if preserve_existing && file_len > 0 {
+        Region::from_stream(file)
+            .with_context(|| format!("Failed to open existing region {}", file_path.display()))
+    } else {
+        if !preserve_existing && file_len > 0 {
+            file.set_len(0).with_context(|| {
+                format!(
+                    "Failed to truncate existing region file {}",
+                    file_path.display()
+                )
+            })?;
+        }
+        Region::new(file).with_context(|| format!("Failed to initialize {}", file_path.display()))
+    }
 }
 
 fn build_chunk_bytes(
@@ -394,6 +443,9 @@ fn build_chunk_bytes(
     columns: &ChunkHeights,
     terrain: &TerrainConfig,
 ) -> Result<Option<Vec<u8>>> {
+    if !columns.is_complete() {
+        return Ok(None);
+    }
     let max_height = match columns.max_height() {
         Some(value) => value,
         None => return Ok(None),
