@@ -32,3 +32,7 @@ We recommend the use of [Voxy](https://modrinth.com/mod/voxy) and [C2ME](https:/
 
 - [User Getting Started](docs/users/getting_started.md)
 - [User Configuration Reference](docs/users/configuration.md)
+
+## Watch the presentation Keynote here!
+
+[![Francegen Keynote](https://img.youtube.com/vi/ooidgbK7DrM/0.jpg)](https://www.youtube.com/watch?v=ooidgbK7DrM)
